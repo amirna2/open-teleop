@@ -13,7 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), [os.path.join('launch', 'system_diagnostics.launch.py')]),
     ],
-    install_requires=['setuptools', 'psutil'],
+    install_requires=['setuptools', 'psutil', 'flatbuffers', 'pyzmq'],
     zip_safe=True,
     maintainer='amir',
     maintainer_email='amir@todo.todo',
