@@ -43,6 +43,10 @@ show_help() {
     echo "  clean       Clean all build artifacts"
     echo "  help        Show this help message"
     echo ""
+    echo "Notes:"
+    echo "  - FlatBuffers code is automatically regenerated during builds"
+    echo "  - Use 'fbs' command to manually generate FlatBuffers code without building"
+    echo ""
     echo "Examples:"
     echo "  $0 all        # Build everything"
     echo "  $0 clean      # Clean all build artifacts"
@@ -62,7 +66,7 @@ check_dependencies() {
     fi
     
     # Check flatc for FlatBuffers generation
-    if [[ "$CMD" == "all" || "$CMD" == "fbs" ]]; then
+    if [[ "$CMD" == "all" || "$CMD" == "fbs" || "$CMD" == "bridges" || "$CMD" == "controller" ]]; then
         if ! command_exists flatc; then
             print_error "Error: FlatBuffers compiler (flatc) not found."
             print_error "Please install it with: sudo apt-get install flatbuffers-compiler"
@@ -120,8 +124,8 @@ clean_build() {
     fi
     
     # Clean generated FlatBuffers code
+    print_status "Cleaning generated FlatBuffers code..."
     if [ -d "controller/pkg/flatbuffers" ]; then
-        print_status "Cleaning generated FlatBuffers code..."
         rm -rf controller/pkg/flatbuffers
         echo -e "${GREEN}✓ Removed controller/pkg/flatbuffers directory${NC}"
     fi
@@ -132,6 +136,14 @@ clean_build() {
             print_status "Cleaning FlatBuffers code in $pkg_dir..."
             find "$pkg_dir" -path "*/flatbuffers/*.py" -delete
             echo -e "${GREEN}✓ Removed FlatBuffers code in $pkg_dir${NC}"
+        fi
+    done
+    
+    # Create required FlatBuffers directories
+    mkdir -p controller/pkg/flatbuffers
+    for pkg_dir in ros2_ws/src/*/*/; do
+        if [[ "$pkg_dir" == *"_bridge"* ]]; then
+            mkdir -p "${pkg_dir}flatbuffers"
         fi
     done
     
@@ -174,6 +186,14 @@ generate_interfaces() {
         exit 1
     fi
     
+    # Create output directories if they don't exist
+    mkdir -p controller/pkg/flatbuffers
+    for pkg_dir in ros2_ws/src/*/*/; do
+        if [[ "$pkg_dir" == *"_bridge"* ]]; then
+            mkdir -p "${pkg_dir}flatbuffers"
+        fi
+    done
+    
     print_status "Running generate_interfaces.sh script..."
     ./scripts/generate_interfaces.sh
     
@@ -192,6 +212,11 @@ build_ros2() {
     if [ ! -d "ros2_ws/src" ]; then
         print_error "Error: ros2_ws/src directory not found."
         exit 1
+    fi
+    
+    # Generate FlatBuffers code first if we're not building all
+    if [ "$CMD" != "all" ]; then
+        generate_interfaces
     fi
     
     # Source ROS2 setup
@@ -222,6 +247,11 @@ build_go() {
     if [ ! -d "controller" ]; then
         print_error "Error: controller directory not found."
         exit 1
+    fi
+    
+    # Generate FlatBuffers code first if we're not building all
+    if [ "$CMD" != "all" ]; then
+        generate_interfaces
     fi
     
     cd controller
