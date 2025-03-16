@@ -107,4 +107,4 @@ COLCON_IGNORE
 
 # FlatBuffers generated code
 controller/pkg/flatbuffers/
-*/flatbuffers/*.py
+**/flatbuffers/
