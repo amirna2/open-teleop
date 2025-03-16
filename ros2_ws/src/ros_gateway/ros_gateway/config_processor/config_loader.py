@@ -83,51 +83,80 @@ class ConfigLoader:
         Raises:
             ConfigValidationError: If the configuration is invalid
         """
-        # Check for required top-level sections
-        if not config:
-            raise ConfigValidationError("Configuration is empty")
+        # Check for required metadata fields
+        required_metadata = ['version', 'config_id', 'lastUpdated', 'robot_id']
+        for field in required_metadata:
+            if field not in config:
+                raise ConfigValidationError(f"Missing required metadata field: {field}")
         
-        if 'gateway' not in config:
-            raise ConfigValidationError("Missing 'gateway' section in configuration")
+        # Check for topic_mappings
+        if 'topic_mappings' not in config:
+            raise ConfigValidationError("Missing 'topic_mappings' section in configuration")
             
-        gateway = config['gateway']
-        
-        # Check ZMQ configuration
-        if 'zmq' not in gateway:
-            raise ConfigValidationError("Missing 'zmq' section in gateway configuration")
-            
-        zmq_config = gateway['zmq']
-        required_zmq_keys = ['controller_address', 'publish_address']
-        for key in required_zmq_keys:
-            if key not in zmq_config:
-                raise ConfigValidationError(f"Missing required ZMQ config key: {key}")
-        
-        # Check topic mappings
-        if 'topic_mappings' not in gateway:
-            raise ConfigValidationError("Missing 'topic_mappings' section in gateway configuration")
-            
-        topic_mappings = gateway['topic_mappings']
+        topic_mappings = config['topic_mappings']
         if not isinstance(topic_mappings, list):
             raise ConfigValidationError("'topic_mappings' must be a list")
             
+        # Check defaults section
+        if 'defaults' not in config:
+            raise ConfigValidationError("Missing 'defaults' section in configuration")
+            
+        defaults = config['defaults']
+        for key in ['priority', 'direction', 'source_type']:
+            if key not in defaults:
+                raise ConfigValidationError(f"Missing '{key}' in defaults section")
+                
+        # Validate each topic mapping
         for idx, mapping in enumerate(topic_mappings):
-            self._validate_topic_mapping(mapping, idx)
+            self._validate_topic_mapping(mapping, idx, defaults)
+        
+        # Check settings
+        if 'settings' not in config:
+            raise ConfigValidationError("Missing 'settings' section in configuration")
+            
+        settings = config['settings']
+        required_settings = ['message_buffer_size', 'reconnect_interval_ms']
+        for key in required_settings:
+            if key not in settings:
+                raise ConfigValidationError(f"Missing required setting: {key}")
     
-    def _validate_topic_mapping(self, mapping: Dict[str, Any], idx: int) -> None:
+    def _validate_topic_mapping(self, mapping: Dict[str, Any], idx: int, defaults: Dict[str, Any]) -> None:
         """
         Validate a single topic mapping.
         
         Args:
             mapping: The topic mapping dictionary to validate
             idx: The index of the mapping in the list (for error reporting)
+            defaults: The default values to use for optional fields
             
         Raises:
             ConfigValidationError: If the mapping is invalid
         """
-        required_keys = ['ros_topic', 'ott', 'message_type']
+        # All mappings must have these fields
+        required_keys = ['ott', 'priority', 'direction']
         for key in required_keys:
-            if key not in mapping:
+            if key not in mapping and key not in defaults:
                 raise ConfigValidationError(f"Missing required key '{key}' in topic mapping {idx}")
+        
+        # Check source_type
+        if 'source_type' not in mapping and 'source_type' not in defaults:
+            raise ConfigValidationError(f"Missing 'source_type' in topic mapping {idx}")
+            
+        source_type = mapping.get('source_type', defaults.get('source_type'))
+        valid_source_types = ['ROS2_CDM', 'OPEN_TELEOP']
+        if source_type not in valid_source_types:
+            raise ConfigValidationError(
+                f"Invalid source_type '{source_type}' in topic mapping {idx}. "
+                f"Must be one of {valid_source_types}"
+            )
+            
+        # ROS2_CDM mappings must have ros_topic and message_type
+        if source_type == 'ROS2_CDM':
+            for key in ['ros_topic', 'message_type']:
+                if key not in mapping:
+                    raise ConfigValidationError(
+                        f"Missing required key '{key}' for ROS2_CDM topic mapping {idx}"
+                    )
         
         # Validate priority if present
         if 'priority' in mapping:
@@ -160,11 +189,11 @@ class ConfigLoader:
         if not self.config:
             return None
             
-        topic_mappings = self.config['gateway'].get('topic_mappings', [])
-        defaults = self.config['gateway'].get('defaults', {})
+        topic_mappings = self.config.get('topic_mappings', [])
+        defaults = self.config.get('defaults', {})
         
         for mapping in topic_mappings:
-            if mapping['ros_topic'] == ros_topic:
+            if mapping.get('source_type', defaults.get('source_type')) == 'ROS2_CDM' and mapping.get('ros_topic') == ros_topic:
                 # Apply defaults for missing values
                 result = defaults.copy()
                 result.update(mapping)
@@ -185,8 +214,8 @@ class ConfigLoader:
         if not self.config:
             return []
             
-        topic_mappings = self.config['gateway'].get('topic_mappings', [])
-        defaults = self.config['gateway'].get('defaults', {})
+        topic_mappings = self.config.get('topic_mappings', [])
+        defaults = self.config.get('defaults', {})
         default_direction = defaults.get('direction', 'OUTBOUND')
         
         result = []
@@ -198,4 +227,49 @@ class ConfigLoader:
                 config.update(mapping)
                 result.append(config)
                 
-        return result 
+        return result
+        
+    def get_topic_mappings_by_source_type(self, source_type: str) -> List[Dict[str, Any]]:
+        """
+        Get all topic mappings with the specified source type.
+        
+        Args:
+            source_type: The source type to filter by ('ROS2_CDM' or 'OPEN_TELEOP')
+            
+        Returns:
+            List of topic mappings with the specified source type
+        """
+        if not self.config:
+            return []
+            
+        topic_mappings = self.config.get('topic_mappings', [])
+        defaults = self.config.get('defaults', {})
+        default_source_type = defaults.get('source_type')
+        
+        result = []
+        for mapping in topic_mappings:
+            map_source_type = mapping.get('source_type', default_source_type)
+            if map_source_type == source_type:
+                # Apply defaults for missing values
+                config = defaults.copy()
+                config.update(mapping)
+                result.append(config)
+                
+        return result
+        
+    def get_zmq_config(self) -> Dict[str, Any]:
+        """
+        Get the ZeroMQ configuration.
+        
+        Returns:
+            Dictionary with ZeroMQ configuration or empty dict if not found
+        """
+        settings = self.config.get('settings', {})
+        zmq_config = {
+            'message_buffer_size': settings.get('message_buffer_size', 1000),
+            'reconnect_interval_ms': settings.get('reconnect_interval_ms', 1000),
+            # Hardcoded values for now, to be replaced with bootstrap config
+            'controller_address': 'tcp://localhost:5555',
+            'publish_address': 'tcp://*:5556'
+        }
+        return zmq_config 

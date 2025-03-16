@@ -57,22 +57,44 @@ class RosGateway(Node):
         self.logger.info('Starting ROS Gateway for Open-Teleop')
         self.logger.info(f'Project root: {self.project_root}')
         
-        # Load configuration
-        config_path = self.declare_parameter('config_path', 
-                                           os.path.join(os.path.dirname(__file__), '../config/gateway_config.yaml')).value
+        # Load configuration - try project config first, then fall back to package config
+        project_config_path = os.path.join(self.project_root, 'config/gateway_config_sample.yaml')
+        package_config_path = os.path.join(os.path.dirname(__file__), '../config/gateway_config.yaml')
+        
+        config_path = self.declare_parameter('config_path', project_config_path).value
+        if not os.path.exists(config_path):
+            self.logger.warning(f"Config file not found at {config_path}, falling back to package config")
+            config_path = package_config_path
+            
         self.logger.info(f"Loading configuration from: {config_path}")
         self.config_loader = ConfigLoader(config_path)
         self.config = self.config_loader.load_config()
         
-        # Load logging configuration if present
-        if 'gateway' in self.config and 'logging' in self.config['gateway']:
-            self._configure_logging(self.config['gateway']['logging'])
+        # Display config info
+        self.logger.info(f"Loaded configuration version: {self.config.get('version')}")
+        self.logger.info(f"Config ID: {self.config.get('config_id')}")
+        self.logger.info(f"Robot ID: {self.config.get('robot_id')}")
+        
+        # Configure logging
+        self._configure_logging()
         
         # Initialize the message converter
         self.converter = MessageConverter()
         
-        # Initialize the ZeroMQ client for controller communication
-        zmq_config = self.config['gateway']['zmq']
+        # Get ZeroMQ configuration
+        zmq_config = self.config_loader.get_zmq_config()
+        
+        # Override with environment variables if set
+        if 'TELEOP_ZMQ_CONTROLLER_ADDRESS' in os.environ:
+            zmq_config['controller_address'] = os.environ['TELEOP_ZMQ_CONTROLLER_ADDRESS']
+            self.logger.info(f"Using controller address from environment: {zmq_config['controller_address']}")
+            
+        if 'TELEOP_ZMQ_PUBLISH_ADDRESS' in os.environ:
+            zmq_config['publish_address'] = os.environ['TELEOP_ZMQ_PUBLISH_ADDRESS']
+            self.logger.info(f"Using publish address from environment: {zmq_config['publish_address']}")
+        
+        # Initialize the ZeroMQ client
+        self.logger.info(f"ZMQ Controller address: {zmq_config['controller_address']}")
         self.zmq_client = ZmqClient(
             controller_address=zmq_config['controller_address'],
             publish_address=zmq_config['publish_address'],
@@ -81,11 +103,24 @@ class RosGateway(Node):
             logger=self.logger
         )
         
-        # Initialize the topic manager
+        # Get topic mappings
+        topic_mappings = self.config.get('topic_mappings', [])
+        defaults = self.config.get('defaults', {})
+        
+        # Log topic mapping info
+        ros2_topics = self.config_loader.get_topic_mappings_by_source_type('ROS2_CDM')
+        ot_topics = self.config_loader.get_topic_mappings_by_source_type('OPEN_TELEOP')
+        self.logger.info(f"Found {len(ros2_topics)} ROS2 topics and {len(ot_topics)} Open-Teleop topics")
+        
+        inbound_topics = self.config_loader.get_topic_mappings_by_direction('INBOUND')
+        outbound_topics = self.config_loader.get_topic_mappings_by_direction('OUTBOUND')
+        self.logger.info(f"Found {len(inbound_topics)} inbound topics and {len(outbound_topics)} outbound topics")
+        
+        # Initialize the topic manager (for ROS2 topics only)
         self.topic_manager = TopicManager(
             node=self, 
-            topic_mappings=self.config['gateway']['topic_mappings'],
-            defaults=self.config['gateway'].get('defaults', {}),
+            topic_mappings=ros2_topics,
+            defaults=defaults,
             message_converter=self.converter,
             zmq_client=self.zmq_client,
             logger=self.logger
@@ -94,8 +129,8 @@ class RosGateway(Node):
         # Initialize the topic publisher for incoming commands
         self.topic_publisher = TopicPublisher(
             node=self,
-            topic_mappings=self.config['gateway']['topic_mappings'],
-            defaults=self.config['gateway'].get('defaults', {}),
+            topic_mappings=inbound_topics,
+            defaults=defaults,
             message_converter=self.converter,
             zmq_client=self.zmq_client,
             logger=self.logger
@@ -110,35 +145,12 @@ class RosGateway(Node):
         
         self.logger.info('ROS Gateway is ready')
     
-    def _configure_logging(self, logging_config):
+    def _configure_logging(self):
         """Configure the logger based on the configuration file."""
         try:
-            # Get log level
-            level = log.level_from_string(logging_config.get('level', 'INFO'))
-            
-            # Process log path
-            log_path = logging_config.get('log_path', 'logs/ros_gateway')
-            
-            # If path is relative, make it relative to project root
-            if not os.path.isabs(log_path):
-                log_path = os.path.join(self.project_root, log_path)
-                
-            # Expand ~ to user's home directory if present
-            log_path = os.path.expanduser(log_path)
-            
-            # Create directory if it doesn't exist
-            os.makedirs(log_path, exist_ok=True)
-            
-            # Configure the logger
-            self.logger = log.get_logger(
-                name=f"{self.get_name()}",
-                log_dir=log_path,
-                console_level=level,
-                file_level=log.DEBUG if logging_config.get('log_to_file', True) else level
-            )
-            
-            self.logger.info(f"Logger configured with level: {logging_config.get('level', 'INFO')}")
-            self.logger.info(f"Log files will be saved to: {log_path}")
+            # We already have the basic logger set up, but we might want to update it
+            # based on the configuration. For simplicity, we'll just keep the current logger.
+            pass
             
         except Exception as e:
             # Fall back to original logger for error reporting
