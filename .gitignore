@@ -95,6 +95,7 @@ go.work
 .cursor/
 *.swp
 *.swo
+open-teleop.code-workspace
 
 # Emacs
 .#*
@@ -103,4 +104,7 @@ go.work
 CATKIN_IGNORE
 COLCON_IGNORE
 
-open-teleop.code-workspace
+
+# FlatBuffers generated code
+controller/pkg/flatbuffers/
+*/flatbuffers/*.py

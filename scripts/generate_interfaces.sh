@@ -18,9 +18,31 @@ fi
 # Ensure output directories exist
 mkdir -p "$GO_OUTPUT_DIR"
 
-# Process each schema file
+# First, process the OTT message schema which is common to all bridges
+OTT_SCHEMA="$SCHEMAS_DIR/ott_message.fbs"
+if [ -f "$OTT_SCHEMA" ]; then
+    echo "Processing common schema: ott_message.fbs"
+    
+    # Generate Go code for controller
+    echo "Generating Go code for OTT message..."
+    flatc --go -o "$GO_OUTPUT_DIR" "$OTT_SCHEMA"
+    
+    # Generate Python code for all bridge packages
+    echo "Generating Python code for all bridge packages..."
+    for pkg_dir in "$ROS2_OUTPUT_DIR"/*bridge*/*; do
+        if [ -d "$pkg_dir" ]; then
+            # Create flatbuffers directory if it doesn't exist
+            mkdir -p "$pkg_dir/flatbuffers"
+            echo "Generating Python code for $(basename "$(dirname "$pkg_dir")")..."
+            flatc --python -o "$pkg_dir/flatbuffers" "$OTT_SCHEMA"
+        fi
+    done
+fi
+
+# Process remaining schema files with specific mappings
 for schema in "$SCHEMAS_DIR"/*.fbs; do
-    if [ -f "$schema" ]; then
+    # Skip the OTT message schema as we've already processed it
+    if [ -f "$schema" ] && [ "$(basename "$schema")" != "ott_message.fbs" ]; then
         schema_name=$(basename "$schema")
         echo "Processing schema: $schema_name"
         
