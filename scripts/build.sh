@@ -37,7 +37,7 @@ show_help() {
     echo ""
     echo "Commands:"
     echo "  all         Build all components (default if no command specified)"
-    echo "  bridges     Build only ROS2 bridge nodes"
+    echo "  gateway     Build only ROS Gateway node"
     echo "  controller  Build only Go controller"
     echo "  fbs         Generate FlatBuffers interface code only"
     echo "  clean       Clean all build artifacts"
@@ -51,7 +51,7 @@ show_help() {
     echo "  $0 all        # Build everything"
     echo "  $0 clean      # Clean all build artifacts"
     echo "  $0 fbs        # Generate FlatBuffers code only"
-    echo "  $0 bridges    # Build only ROS2 bridge nodes"
+    echo "  $0 gateway    # Build only ROS Gateway node"
 }
 
 # Check for required tools
@@ -66,7 +66,7 @@ check_dependencies() {
     fi
     
     # Check flatc for FlatBuffers generation
-    if [[ "$CMD" == "all" || "$CMD" == "fbs" || "$CMD" == "bridges" || "$CMD" == "controller" ]]; then
+    if [[ "$CMD" == "all" || "$CMD" == "fbs" || "$CMD" == "gateway" || "$CMD" == "controller" ]]; then
         if ! command_exists flatc; then
             print_error "Error: FlatBuffers compiler (flatc) not found."
             print_error "Please install it with: sudo apt-get install flatbuffers-compiler"
@@ -75,7 +75,7 @@ check_dependencies() {
     fi
     
     # Check colcon for ROS2 builds
-    if [[ "$CMD" == "all" || "$CMD" == "bridges" ]]; then
+    if [[ "$CMD" == "all" || "$CMD" == "gateway" ]]; then
         if ! command_exists colcon; then
             print_error "Error: colcon build tool not found."
             print_error "Please install it with: pip install -U colcon-common-extensions"
@@ -130,22 +130,20 @@ clean_build() {
         echo -e "${GREEN}✓ Removed controller/pkg/flatbuffers directory${NC}"
     fi
     
-    # Find and clean any bridge node FlatBuffers code
-    for pkg_dir in ros2_ws/src/bridge_nodes/*/*/; do
-        if find "$pkg_dir" -path "*/flatbuffers/*" 2>/dev/null | grep -q .; then
-            print_status "Cleaning FlatBuffers code in ${pkg_dir%/}..."
-            find "$pkg_dir" -path "*/flatbuffers/*" -type d -exec rm -rf {} +
-            echo -e "${GREEN}✓ Removed FlatBuffers code in ${pkg_dir%/}${NC}"
+    # Clean FlatBuffers code in ros_gateway
+    if [ -d "ros2_ws/src/ros_gateway" ]; then
+        if find "ros2_ws/src/ros_gateway" -path "*/flatbuffers/*" 2>/dev/null | grep -q .; then
+            print_status "Cleaning FlatBuffers code in ros_gateway..."
+            find "ros2_ws/src/ros_gateway" -path "*/flatbuffers/*" -type d -exec rm -rf {} +
+            echo -e "${GREEN}✓ Removed FlatBuffers code in ros_gateway${NC}"
         fi
-    done
+    fi
     
     # Create required FlatBuffers directories
     mkdir -p controller/pkg/flatbuffers
-    for pkg_dir in ros2_ws/src/*/*/; do
-        if [[ "$pkg_dir" == *"_bridge"* ]]; then
-            mkdir -p "${pkg_dir}flatbuffers"
-        fi
-    done
+    if [ -d "ros2_ws/src/ros_gateway" ]; then
+        mkdir -p "ros2_ws/src/ros_gateway/ros_gateway/flatbuffers"
+    fi
     
     # Clean build-related directories in the project root
     print_status "Cleaning project root directories..."
@@ -188,11 +186,9 @@ generate_interfaces() {
     
     # Create output directories if they don't exist
     mkdir -p controller/pkg/flatbuffers
-    for pkg_dir in ros2_ws/src/*/*/; do
-        if [[ "$pkg_dir" == *"_bridge"* ]]; then
-            mkdir -p "${pkg_dir}flatbuffers"
-        fi
-    done
+    if [ -d "ros2_ws/src/ros_gateway" ]; then
+        mkdir -p "ros2_ws/src/ros_gateway/ros_gateway/flatbuffers"
+    fi
     
     print_status "Running generate_interfaces.sh script..."
     ./scripts/generate_interfaces.sh
@@ -205,12 +201,18 @@ generate_interfaces() {
     fi
 }
 
-# Build ROS2 bridge nodes
+# Build ROS2 gateway node
 build_ros2() {
-    print_section "Building ROS2 Bridge Nodes"
+    print_section "Building ROS Gateway Node"
     
     if [ ! -d "ros2_ws/src" ]; then
         print_error "Error: ros2_ws/src directory not found."
+        exit 1
+    fi
+    
+    if [ ! -d "ros2_ws/src/ros_gateway" ]; then
+        print_error "Error: ros2_ws/src/ros_gateway directory not found."
+        print_error "Please make sure the ROS Gateway package is in the ros2_ws/src directory."
         exit 1
     fi
     
@@ -226,14 +228,28 @@ build_ros2() {
     # Build the workspace
     print_status "Building workspace with colcon..."
     cd ros2_ws
-    colcon build --symlink-install
+    
+    # First, build the open_teleop_logger package that the gateway depends on
+    print_status "Building open_teleop_logger dependency..."
+    colcon build --symlink-install --packages-select open_teleop_logger
     
     if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✓ ROS2 bridge nodes build complete${NC}"
-        # Source the setup script
+        print_status "Source the updated setup to make open_teleop_logger available..."
         source install/setup.bash
+        
+        print_status "Building ros_gateway package..."
+        colcon build --symlink-install --packages-select ros_gateway
+        
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}✓ ROS Gateway node build complete${NC}"
+            # Source the setup script
+            source install/setup.bash
+        else
+            print_error "Error building ROS Gateway node"
+            exit 1
+        fi
     else
-        print_error "Error building ROS2 bridge nodes"
+        print_error "Error building open_teleop_logger dependency"
         exit 1
     fi
     
@@ -294,7 +310,7 @@ main() {
             echo "1. In one terminal:"
             echo "   cd ros2_ws"
             echo "   source install/setup.bash"
-            echo "   ros2 launch launch/all_bridges.launch.py"
+            echo "   ros2 launch ros_gateway gateway.launch.py"
             echo ""
             echo "2. In another terminal:"
             echo "   cd controller"
@@ -305,10 +321,10 @@ main() {
             echo "   docker-compose up"
             ;;
         
-        bridges)
-            print_status "Building ROS2 bridge nodes only"
+        gateway)
+            print_status "Building ROS Gateway node only"
             build_ros2
-            print_section "Bridges Build Complete!"
+            print_section "Gateway Build Complete!"
             ;;
         
         controller)

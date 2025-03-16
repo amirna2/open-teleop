@@ -4,9 +4,9 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch.actions import DeclareLaunchArgument, ExecuteProcess
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     """Generate launch description for the ROS Gateway node."""
@@ -24,21 +24,15 @@ def generate_launch_description():
         description='Path to the ROS Gateway configuration file'
     )
     
-    # Create the gateway node
-    gateway_node = Node(
-        package='ros_gateway',
-        executable='gateway_node',
+    # Create the gateway node using Python module directly
+    gateway_process = ExecuteProcess(
+        cmd=['python3', '-m', 'ros_gateway.gateway_node'],
         name='ros_gateway',
         output='screen',
-        emulate_tty=True,
-        parameters=[{
-            'config_path': LaunchConfiguration('config_path')
-        }],
-        namespace=''
     )
     
     # Return the launch description
     return LaunchDescription([
         config_path_arg,
-        gateway_node
+        gateway_process
     ]) 

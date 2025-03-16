@@ -73,9 +73,9 @@
    - Implement metrics collection
    - Create health checks
 
-   ---
 
-   ## Implementation Summary and Next Steps
+---
+## Implementation Summary and Next Steps
 
 Based on the architecture document and diagram, I've created a foundation for implementing the ROS Gateway (formerly "Universal Bridge"). Here's a summary of what we've accomplished and what's next:
 

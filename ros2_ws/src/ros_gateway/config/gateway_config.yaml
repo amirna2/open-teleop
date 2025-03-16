@@ -58,5 +58,5 @@ gateway:
   logging:
     level: "INFO"
     log_to_file: true
-    log_path: "/var/log/ros_gateway"
+    log_path: "logs/ros_gateway"
     log_rotation_days: 7 
