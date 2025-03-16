@@ -27,19 +27,36 @@ if [ -f "$OTT_SCHEMA" ]; then
     echo "Generating Go code for OTT message..."
     flatc --go -o "$GO_OUTPUT_DIR" "$OTT_SCHEMA"
     
-    # Generate Python code for all bridge packages
-    echo "Generating Python code for all bridge packages..."
-    for pkg_dir in "$ROS2_OUTPUT_DIR"/*bridge*/*; do
+    # Generate Python code for bridge packages only
+    echo "Generating Python code for bridge packages..."
+    # List all packages in the bridge_nodes directory
+    for pkg_dir in "$ROS2_OUTPUT_DIR"/*; do
         if [ -d "$pkg_dir" ]; then
-            # Create flatbuffers directory if it doesn't exist
-            mkdir -p "$pkg_dir/flatbuffers"
-            echo "Generating Python code for $(basename "$(dirname "$pkg_dir")")..."
-            flatc --python -o "$pkg_dir/flatbuffers" "$OTT_SCHEMA"
+            pkg_name=$(basename "$pkg_dir")
+            
+            # Only generate for actual bridge packages
+            # Check if the package name contains "bridge" or "diagnostic"
+            if [[ "$pkg_name" == *bridge* || "$pkg_name" == *diagnostic* ]]; then
+                echo "Found bridge package: $pkg_name"
+                
+                # Find the Python module directory (same name as the package)
+                module_dir="$pkg_dir/$pkg_name"
+                if [ -d "$module_dir" ]; then
+                    # Create flatbuffers directory
+                    mkdir -p "$module_dir/flatbuffers"
+                    echo "Generating Python code for $pkg_name..."
+                    flatc --python -o "$module_dir/flatbuffers" "$OTT_SCHEMA"
+                else
+                    echo "Warning: Python module directory not found in $pkg_dir"
+                fi
+            else
+                echo "Skipping non-bridge package: $pkg_name"
+            fi
         fi
     done
 fi
 
-# Process remaining schema files with specific mappings
+# Process remaining schema files (if any)
 for schema in "$SCHEMAS_DIR"/*.fbs; do
     # Skip the OTT message schema as we've already processed it
     if [ -f "$schema" ] && [ "$(basename "$schema")" != "ott_message.fbs" ]; then
@@ -47,12 +64,8 @@ for schema in "$SCHEMAS_DIR"/*.fbs; do
         echo "Processing schema: $schema_name"
         
         # Extract package name (for ROS2 output)
-        # If diagnostics.fbs maps to system_diagnostic, teleop.fbs to teleop_command_bridge, etc.
         package_name=""
         case "$schema_name" in
-            diagnostics.fbs)
-                package_name="system_diagnostic"
-                ;;
             teleop.fbs)
                 package_name="teleop_command_bridge"
                 ;;

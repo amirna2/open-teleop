@@ -131,11 +131,11 @@ clean_build() {
     fi
     
     # Find and clean any bridge node FlatBuffers code
-    for pkg_dir in ros2_ws/src/*/*/; do
-        if find "$pkg_dir" -name "*.py" -path "*/flatbuffers/*" 2>/dev/null | grep -q .; then
-            print_status "Cleaning FlatBuffers code in $pkg_dir..."
-            find "$pkg_dir" -path "*/flatbuffers/*.py" -delete
-            echo -e "${GREEN}✓ Removed FlatBuffers code in $pkg_dir${NC}"
+    for pkg_dir in ros2_ws/src/bridge_nodes/*/*/; do
+        if find "$pkg_dir" -path "*/flatbuffers/*" 2>/dev/null | grep -q .; then
+            print_status "Cleaning FlatBuffers code in ${pkg_dir%/}..."
+            find "$pkg_dir" -path "*/flatbuffers/*" -type d -exec rm -rf {} +
+            echo -e "${GREEN}✓ Removed FlatBuffers code in ${pkg_dir%/}${NC}"
         fi
     done
     
