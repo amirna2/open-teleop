@@ -2,171 +2,354 @@
 
 ## 1. Overview
 
-The Open-Teleop Platform is a distributed system designed to enable remote operation of robots by providing a standardized way to stream sensor data, video, and command information between robots and operators. The architecture consists of three main components:
+The Open-Teleop Platform is a distributed system designed to enable remote operation of robots by providing a standardized way to stream sensor data, video, and command information between robots and operators. The architecture consists of three main layers:
 
-1. **Robot ROS Nodes** - The native ROS2 ecosystem running on the robot
-2. **Bridge Nodes Container** - Python/C++ bridges that connect to ROS topics and forward data
-3. **Controller Container** - Go-based services that process data and provide APIs
-
-### 1.1 Key Components
+1. **Robot Layer** - The native ROS2 ecosystem running on the robot
+2. **Bridge Layer** - A universal bridge that connects to ROS topics and forwards data
+3. **Controller Layer** - A Go-based controller for processing messages and providing client APIs
 
 ![Architecture Diagram](open-teleop-arch.png)
 
-## 2. Component Descriptions
+### 1.1 Key Design Principles
 
-### 2.1 Robot ROS Nodes
+- **Universal Bridge**: A single bridge component handles all ROS topics
+- **Topic-Based Architecture**: System organized around topics rather than services
+- **Priority-Based Processing**: Messages processed according to priority levels
+- **Dynamic Message Handling**: Any ROS message format can be handled
+- **Standardized Topic Naming**: Open-Teleop-Topic (OTT) naming convention
 
-The bottom layer representing the robot's native ROS2 ecosystem. These nodes publish data on various topics that provide information about the robot's state, sensor readings, camera feeds, etc.
+## 2. Component Architecture
 
-- Publishes data on standard or robot-specific ROS topics
-- Subscribes to command topics for teleoperation
-- Operates independently of the teleop platform
+### 2.1 Universal Bridge
 
-### 2.2 Bridge Nodes Container (Python/C++)
+The Universal Bridge is a single component that connects to the robot's ROS ecosystem and forwards messages to the controller.
 
-Bridges connect to the robot's ROS topics and forward raw message data to the Controller. Each bridge specializes in a specific data type:
+#### 2.1.1 Topic Subscriber
+- **Role**: Subscribes to configured ROS topics
+- **Responsibilities**:
+  - Dynamically subscribe to topics based on configuration
+  - Receive ROS messages from the robot
+  - Handle subscription lifecycle (connect, disconnect, reconnect)
 
-- **video_streaming_bridge**: Handles camera/video data from the robot
-- **audio_streaming_bridge**: Manages audio streams from the robot
-- **sensor_bridge**: Collects sensor data (lidar, IMU, etc.)
-- **navigation_bridge**: Processes navigation and position information
-- **teleop_bridge**: Manages command and control data
-- **system_diagnostics_bridge**: Collects system diagnostics information
+#### 2.1.2 Message Converter
+- **Role**: Converts ROS messages to OttMessages
+- **Responsibilities**:
+  - Wrap raw ROS message data in OttMessage format
+  - Assign OTT identifiers based on configuration
+  - Set appropriate priority levels
+  - Add timestamp and version information
 
-Bridges operate by:
-1. Subscribing to specific ROS topics
-2. Serializing the raw ROS message data
-3. Forwarding the data via ZeroMQ/flatbuffer to the corresponding service in the Controller
-4. Not performing any parsing or transformation of message structure
+#### 2.1.3 ZeroMQ Client
+- **Role**: Sends messages to the controller
+- **Responsibilities**:
+  - Maintain connection to controller
+  - Serialize and send OttMessages
+  - Handle connection failures and recovery
 
-### 2.3 Controller Container (Go)
+#### 2.1.4 Topic Publisher
+- **Role**: Publishes messages to ROS topics
+- **Responsibilities**:
+  - Receive control commands from controller
+  - Convert to appropriate ROS message format
+  - Publish to configured ROS topics
 
-The Go Controller contains multiple components that work together to process, transform, and deliver robot data:
+#### 2.1.5 Config Processor
+- **Role**: Manages bridge configuration
+- **Responsibilities**:
+  - Load and parse configuration
+  - Apply topic mappings (ROS topic → OTT)
+  - Handle dynamic configuration updates
 
-#### 2.3.1 Service Layer
+### 2.2 Controller Layer
 
-- **video_stream_service**: Handles video data for streaming to clients
-- **audio_stream_service**: Manages audio streaming
-- **sensor_service**: Processes sensor data
-- **navigation_service**: Manages navigation information
-- **teleop_service**: Handles command and control operations
-- **system_diagnostics_service**: Processes system diagnostic data
+The Controller layer processes messages from the bridge and provides interfaces for clients.
 
-#### 2.3.2 API Layer
+#### 2.2.1 Message Processing
 
-- **WebRTC**: Manages real-time video/audio streaming to clients
-- **gRPC**: Provides efficient service-to-service communication
-- **HTTPS/WSS**: Handles web client connections and WebSocket communication
-- **Config Manager**: Manages system configuration, including robot topic mappings
+##### MessageReceiver
+- **Role**: Receives messages from the Universal Bridge
+- **Responsibilities**:
+  - Maintain ZeroMQ server socket
+  - Receive and deserialize OttMessages
+  - Initial validation of messages
+  - Forward to MessageDirector
 
-#### 2.3.3 ROS Parser CGO (New Component)
+##### MessageDirector
+- **Role**: Routes messages based on priority
+- **Responsibilities**:
+  - Classify messages by priority level
+  - Route to appropriate processing pool
+  - Implement backpressure handling if needed
+  - Track processing metrics
 
-A C++ component integrated into the Go controller via CGO (cgo - Go's foreign function interface) that:
-- Uses rclcpp library to parse any ROS message format
-- Does not require the controller to be a ROS node
-- Allows the system to handle any ROS message type without prior knowledge of its structure
-- Converts parsed message data into a format usable by Go services
+##### Processing Pools
+- **Role**: Process messages according to priority
+- **Types**:
+  - **HighPriorityPool**: For video, audio, and critical data
+  - **StandardPool**: For regular telemetry and sensor data
+  - **LowPriorityPool**: For diagnostics and logs
+- **Responsibilities**:
+  - Maintain worker goroutines
+  - Process messages by topic
+  - Call ROS Parser for message decoding
+  - Forward processed data to ConnectionManager
+
+#### 2.2.2 Shared Services
+
+##### RosParser
+- **Role**: Parse raw ROS message data
+- **Responsibilities**:
+  - Implemented as a CGO component using rclcpp
+  - Dynamically parse any ROS message format
+  - Convert to Go-friendly data structures
+  - Provide message introspection
+
+##### TopicRegistry
+- **Role**: Manage topic information
+- **Responsibilities**:
+  - Maintain registry of active topics
+  - Store topic metadata
+  - Track topic statistics
+  - Manage topic handlers
+
+#### 2.2.3 Client Communication
+
+##### ConnectionManager
+- **Role**: Route processed data to clients
+- **Responsibilities**:
+  - Track client subscriptions
+  - Route data to appropriate protocol servers
+  - Manage connection lifecycle
+  - Implement delivery policies
+
+##### SessionManager
+- **Role**: Manage client sessions
+- **Responsibilities**:
+  - Authentication and authorization
+  - Session creation and tracking
+  - User management
+  - Permission checking
+
+##### Protocol Servers
+- **Types**:
+  - **WebRTCServer**: Video and audio streaming
+  - **WebSocketServer**: Real-time data updates
+  - **RESTServer**: Configuration and queries
+  - **gRPCServer**: Service-to-service communication
+- **Responsibilities**:
+  - Maintain client connections
+  - Implement protocol-specific logic
+  - Deliver data to clients
+  - Handle connection lifecycle
 
 ## 3. Data Flow
 
-### 3.1 Ingestion Path
+### 3.1 Uplink Path (Robot → Client)
 
-1. **Robot → Bridge**:
-   - Robot ROS nodes publish data on various topics
-   - Bridge nodes subscribe to relevant topics
-   - Raw messages flow from robot nodes to bridges via ROS DDS
+1. **ROS Topic → Universal Bridge**:
+   - Robot publishes data to ROS topics
+   - Universal Bridge subscribes to configured topics
+   - Raw messages received by Topic Subscriber
 
-2. **Bridge → Service**:
-   - Bridges forward raw message data using ZeroMQ/flatbuffer
-   - Raw message includes topic name, message type, and serialized data
-   - No transformation of message structure at this stage
+2. **Within Universal Bridge**:
+   - Message Converter wraps raw data in OttMessage
+   - OTT identifier assigned based on configuration
+   - Priority level set based on topic configuration
+   - ZeroMQ Client sends to controller
 
-3. **Service → Parser**:
-   - Go services receive raw ROS message data
-   - Services pass raw data to the ROS Parser CGO component
-   - Parser uses rclcpp to introspect and parse the message structure
+3. **Controller Processing**:
+   - MessageReceiver receives OttMessage
+   - MessageDirector routes to appropriate processing pool
+   - Processing Pool calls RosParser if needed
+   - Data processed according to topic type
 
-4. **Parser → OTT Conversion**:
-   - Parsed structured data is converted to OTT (Open-Teleop-Topic) format
-   - OTT provides a consistent naming convention:
-     - Standard ROS messages: `teleop.{package}.{message}` (e.g., `teleop.sensor.battery_state`)
-     - Custom messages: `teleop.custom.{package}.{message}` (e.g., `teleop.custom.acme_msgs.robot_status`)
+4. **Client Delivery**:
+   - Processed data sent to ConnectionManager
+   - ConnectionManager routes to clients based on subscriptions
+   - Appropriate protocol server delivers to client
+   - Client displays or processes the data
 
-5. **Service Processing**:
-   - Services use the OTT-formatted data for:
-     - Streaming to clients (video/audio)
-     - Visualization in web UI
-     - Cloud ingestion
-     - Monitoring and analytics
+### 3.2 Downlink Path (Client → Robot)
 
-### 3.2 Command Path
+1. **Client → Protocol Server**:
+   - Client sends command via appropriate protocol
+   - Protocol Server receives and validates
+   - Command forwarded to controller
 
-1. **Client → HTTPS/WSS → Service**:
-   - Web clients send commands via HTTP or WebSocket
-   - Commands are received by appropriate services
+2. **Controller Processing**:
+   - Command processed and converted to appropriate format
+   - Sent to Universal Bridge via ZeroMQ
 
-2. **Service → Bridge**:
-   - Services format commands for robot consumption
-   - Commands sent to bridges via ZeroMQ Req/Resp pattern
+3. **Universal Bridge → ROS**:
+   - Command received by ZeroMQ Client
+   - Converted to appropriate ROS message
+   - Published to configured ROS topic
+   - Robot receives and executes command
 
-3. **Bridge → Robot**:
-   - Bridges publish commands to appropriate ROS topics
-   - Robot nodes subscribe to and execute commands
+## 4. Message Format
 
-## 4. Topic Discovery and Configuration
+### 4.1 OttMessage Format
 
-### 4.1 Topic Discovery
+The OttMessage is the standard message format for bridge-to-controller communication:
 
-1. When connecting to a new robot, the system discovers available ROS topics
-2. Topic information (name, message type) is presented to users via the web UI
-3. Users select which topics they want to monitor/control
+```
+table OttMessage {
+  // Schema version for future compatibility
+  version:          uint8 = 1;
+  
+  // Core message content
+  payload:          [ubyte];          // Raw message data
+  content_type:     ContentType = ROS2_MESSAGE;
+  
+  // Single identifier from config
+  ott:              string;           // Open-Teleop-Topic name
+  
+  // Priority information
+  priority:         Priority = STANDARD;
+  
+  // Timing information
+  timestamp_ns:     int64;           
+}
+```
 
-### 4.2 Configuration Management
+### 4.2 Priority Levels
 
-The Config Manager:
-1. Stores the mapping between robot topics and services
-2. Configures bridges to subscribe to selected topics
-3. Provides configuration to services for processing specific data types
-4. No manual mapping needed for message fields due to the C++ parser capability
+Messages are processed according to priority:
 
-## 5. Open-Teleop-Topic (OTT) Specification
+- **HIGH**: Real-time data requiring immediate processing
+  - Examples: Video frames, audio samples, emergency status
+  - Processed in dedicated high-performance pool
+  - Minimal latency is the primary goal
 
-The OTT naming convention provides a standardized way to reference data types in the system:
+- **STANDARD**: Regular telemetry and status updates
+  - Examples: Sensor readings, position data, battery status
+  - Processed in standard pool
+  - Balance between throughput and latency
+
+- **LOW**: Non-critical information
+  - Examples: Diagnostics, logs, statistics
+  - Processed when resources available
+  - May be batched for efficiency
+
+### 4.3 Open-Teleop-Topic (OTT) Specification
+
+The OTT naming convention provides a standardized way to reference topics:
 
 - **Format**: `teleop.[namespace].[message_name]`
-- **Standard ROS Messages**:
-  - `sensor_msgs/BatteryState` → `teleop.sensor.battery_state`
-  - `sensor_msgs/Image` → `teleop.sensor.image`
-  - `nav_msgs/Odometry` → `teleop.nav.odometry`
+- **Examples**:
+  - `teleop.video.main_camera` - Main camera video feed
+  - `teleop.sensor.battery` - Battery status
+  - `teleop.control.arm` - Arm control commands
 
-- **Custom Messages**:
-  - `acme_msgs/RobotStatus` → `teleop.custom.acme_msgs.robot_status`
-  - `foo/Bar` → `teleop.custom.foo.bar`
+## 5. Client Interfaces
 
-This algorithmic conversion requires no manual mapping and scales to any message type.
+### 5.1 WebRTC
 
-## 6. C++ Parser Integration
+- Used for video and audio streaming
+- Provides real-time, low-latency communication
+- Peer-to-peer connection when possible
 
-### 6.1 Parser Implementation
+### 5.2 WebSocket
 
-The C++ Parser component:
-- Uses rclcpp for message introspection without being a full ROS node
-- Provides a C-compatible API for integration with Go via CGO
-- Dynamically handles any ROS message type
-- Returns structured data that Go can work with
+- Used for real-time telemetry and status updates
+- Topic-based subscription model
+- Bidirectional communication
 
-### 6.2 Go Integration
+### 5.3 REST API
 
-- Go services call the parser via CGO bindings
-- Parsed data is converted to Go-friendly structures
-- Services can access message fields without prior knowledge of structure
-- Data is then processed according to service-specific needs
+- Used for configuration and system management
+- Topic discovery and metadata
+- Historical data queries
+- Implemented using Fiber web framework
 
-## 7. Benefits of This Architecture
+### 5.4 gRPC (Optional)
 
-1. **Flexibility**: Can handle any ROS message type from any robot
-2. **Scalability**: No manual mapping required for new message types
-3. **Performance**: Efficient parsing of ROS messages in native C++
-4. **Maintainability**: Clean separation of concerns between components
-5. **Extensibility**: New services can be added without changing the core architecture
-6. **Interoperability**: Works with any ROS2-based robot
+- Used for service-to-service communication
+- High-performance, typed API
+- Code generation for client SDKs
+
+## 6. Design Decisions and Rationale
+
+### 6.1 Universal Bridge vs Multiple Bridges
+
+**Decision**: Use a single Universal Bridge instead of multiple specialized bridges.
+
+**Rationale**:
+- **Simplified Deployment**: Managing a single bridge is simpler than multiple bridges
+- **Reduced Resource Usage**: Fewer processes, shared resources
+- **No Artificial Boundaries**: Topics don't need to be categorized into specific bridges
+- **Configuration-Driven**: New topics added via configuration, not code changes
+
+### 6.2 Priority-Based Processing
+
+**Decision**: Use priority levels to determine message processing.
+
+**Rationale**:
+- **Resource Allocation**: Critical data gets processing resources first
+- **Latency Control**: High-priority messages have predictable latency
+- **Graceful Degradation**: Under load, less critical data degraded first
+- **Flexible Classification**: Priority assigned by configuration, not code
+
+### 6.3 Topic-Based vs Service-Based Architecture
+
+**Decision**: Organize around topics rather than services.
+
+**Rationale**:
+- **Natural Fit**: Aligns with ROS's topic-based communication model
+- **Scalability**: Adding new topics doesn't require new code components
+- **Flexibility**: Clients subscribe to exactly what they need
+- **Future-Proof**: Can handle any message type, even unexpected ones
+
+### 6.4 ROS Parser Implementation
+
+**Decision**: Use CGO to implement ROS parsing in C++ and expose to Go.
+
+**Rationale**:
+- **Message Format Access**: C++ can directly use ROS message definitions
+- **Dynamic Parsing**: Can parse any message format without prior knowledge
+- **Performance**: Parsing in native C++ is more efficient
+- **Reuse**: Leverages existing ROS libraries
+
+### 6.5 ZeroMQ for Internal Communication
+
+**Decision**: Use ZeroMQ for bridge-to-controller communication.
+
+**Rationale**:
+- **Performance**: High-throughput, low-latency messaging
+- **Reliability**: Built-in reconnection and error handling
+- **Flexibility**: Supports multiple messaging patterns
+- **Language Agnostic**: Works with both Python (bridge) and Go (controller)
+
+## 7. Future Development
+
+### 7.1 ROS Parser CGO Implementation
+
+A key next step is implementing the ROS Parser CGO component, which will:
+- Use rclcpp to parse ROS messages
+- Provide a C interface for Go to call
+- Dynamically handle any ROS message type
+- Convert between ROS and Go data structures
+
+### 7.2 Configuration Management
+
+Develop a robust configuration system that:
+- Defines topic mappings (ROS topic → OTT)
+- Sets priority levels
+- Supports dynamic updates
+- Provides validation and error checking
+
+### 7.3 Web UI
+
+Create a web-based user interface that:
+- Displays video feeds
+- Visualizes sensor data
+- Provides control interfaces
+- Manages system configuration
+
+### 7.4 Cloud Integration
+
+Extend the system to integrate with cloud services:
+- Data storage and analytics
+- Remote monitoring
+- Fleet management
+- Multi-robot coordination
