@@ -3,6 +3,7 @@ version: "1.0"
 config_id: "unified-config-2025-03-17"
 lastUpdated: "2025-03-17T00:00:00Z"
 robot_id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
+environment: "development"
 
 # Controller-specific settings
 controller:
