@@ -1,0 +1,67 @@
+# Unified Open-Teleop Configuration
+version: "1.0"
+config_id: "unified-config-2025-03-17"
+lastUpdated: "2025-03-17T00:00:00Z"
+robot_id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
+
+# Controller-specific settings
+controller:
+  server:
+    port: 8080
+    request_timeout: 30
+    max_request_size: 10
+  
+  processing:
+    high_priority_workers: 4
+    standard_priority_workers: 2
+    low_priority_workers: 1
+
+# ZeroMQ communication settings
+zeromq:
+  # Controller binds to this address to receive messages from gateways
+  controller_address: "tcp://*:5555"
+  # Controller binds to this address to publish messages to gateways
+  gateway_address: "tcp://*:5556"
+  # Gateway connects to this address to send messages to controller
+  gateway_connect_address: "tcp://localhost:5555"
+  # Gateway connects to this address to receive messages from controller
+  gateway_subscribe_address: "tcp://localhost:5556"
+  # Communication settings
+  message_buffer_size: 1000
+  reconnect_interval_ms: 1000
+
+# Topic mappings configuration
+topic_mappings:
+  # Sensor data (OUTBOUND - from ROS to controller)
+  - ros_topic: "/battery_state"
+    ott: "teleop.sensor.battery"
+    priority: "STANDARD"
+    message_type: "sensor_msgs/msg/BatteryState"
+    direction: "OUTBOUND"
+    source_type: "ROS2_CDM"
+  
+  # Robot control (INBOUND - from controller to ROS)
+  - ros_topic: "/cmd_vel"
+    ott: "teleop.control.velocity"
+    priority: "HIGH"
+    message_type: "geometry_msgs/msg/Twist"
+    direction: "INBOUND"
+    source_type: "ROS2_CDM"
+    
+  # System metrics (custom Open-Teleop defined message)
+  - ott: "teleop.diagnostic.system_metrics"
+    priority: "LOW"
+    source_type: "OPEN_TELEOP"
+    direction: "OUTBOUND"
+
+# Default settings for topics
+defaults:
+  priority: "STANDARD"
+  direction: "OUTBOUND"
+  source_type: "ROS2_CDM"
+
+# Throttling settings per priority level (0 = no throttling)
+throttle_rates:
+  high_hz: 0
+  standard_hz: 10
+  low_hz: 1 

@@ -74,17 +74,28 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
+	// Log the configuration
 	log.Printf("Loaded configuration for environment: %s", cfg.Environment)
-	log.Printf("ZeroMQ receiver address: %s", cfg.ZeroMQ.ReceiverAddress)
-	log.Printf("ZeroMQ publisher address: %s", cfg.ZeroMQ.PublisherAddress)
+	log.Printf("Configuration ID: %s, Version: %s", cfg.ConfigID, cfg.Version)
+	log.Printf("Robot ID: %s", cfg.RobotID)
+	
+	// Log ZeroMQ settings
+	log.Printf("ZeroMQ controller address: %s", cfg.ZeroMQ.ControllerAddress)
+	log.Printf("ZeroMQ gateway address: %s", cfg.ZeroMQ.GatewayAddress)
+	
+	// Log topic mappings summary
+	inboundTopics := cfg.GetTopicMappingsByDirection("INBOUND")
+	outboundTopics := cfg.GetTopicMappingsByDirection("OUTBOUND")
+	log.Printf("Loaded %d topic mappings (%d inbound, %d outbound)", 
+		len(cfg.TopicMappings), len(inboundTopics), len(outboundTopics))
 
 	// Create a new Fiber app
 	app := fiber.New(fiber.Config{
 		AppName:      "Open-Teleop Controller",
 		ErrorHandler: customErrorHandler,
 		// Use config for server settings
-		ReadTimeout:  time.Duration(cfg.Server.RequestTimeout) * time.Second,
-		BodyLimit:    cfg.Server.MaxRequestSize * 1024 * 1024, // Convert MB to bytes
+		ReadTimeout:  time.Duration(cfg.Controller.Server.RequestTimeout) * time.Second,
+		BodyLimit:    cfg.Controller.Server.MaxRequestSize * 1024 * 1024, // Convert MB to bytes
 	})
 
 	// Add middleware
@@ -98,75 +109,76 @@ func main() {
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"status":      "online",
-			"service":     "open-teleop controller",
-			"environment": cfg.Environment,
 			"version":     cfg.Version,
+			"environment": cfg.Environment,
+			"config_id":   cfg.ConfigID,
+			"robot_id":    cfg.RobotID,
 		})
 	})
 
-	// Health check endpoint
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"status": "healthy",
-			"config": map[string]interface{}{
-				"environment":     cfg.Environment,
-				"zmq_receiver":    cfg.ZeroMQ.ReceiverAddress,
-				"zmq_publisher":   cfg.ZeroMQ.PublisherAddress,
-				"high_workers":    cfg.Processing.HighPriorityWorkers,
-				"standard_workers": cfg.Processing.StandardPriorityWorkers,
-				"low_workers":     cfg.Processing.LowPriorityWorkers,
-			},
 		})
 	})
 	
-	// Set up API routes
-	// Commented out for now until we implement service routes
-	// api := app.Group("/api")
-	
-	// TODO: Set up service routes
-	// Example:
-	// teleop := api.Group("/teleop")
-	// teleop.Post("/command", teleopService.CommandHandler)
+	app.Get("/config", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"config_id":      cfg.ConfigID,
+			"version":        cfg.Version,
+			"last_updated":   cfg.LastUpdated,
+			"environment":    cfg.Environment,
+			"robot_id":       cfg.RobotID,
+			"topic_count":    len(cfg.TopicMappings),
+			"inbound_count":  len(inboundTopics),
+			"outbound_count": len(outboundTopics),
+		})
+	})
 
 	// Start server in a goroutine
-	serverPort := fmt.Sprintf(":%d", cfg.Server.Port)
 	go func() {
-		log.Printf("Server starting on port %d\n", cfg.Server.Port)
-		if err := app.Listen(serverPort); err != nil {
-			log.Fatalf("Failed to start server: %v\n", err)
+		port := cfg.Controller.Server.Port
+		log.Printf("Starting HTTP server on port %d", port)
+		if err := app.Listen(fmt.Sprintf(":%d", port)); err != nil {
+			log.Fatalf("Server error: %v", err)
 		}
 	}()
 
-	// Set up graceful shutdown
+	// Wait for termination signal
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
+	
 	log.Println("Shutting down server...")
 
-	// Create context with timeout for shutdown
+	// Shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	// Attempt graceful shutdown
+	
 	if err := app.ShutdownWithContext(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v\n", err)
+		log.Fatalf("Server shutdown failed: %v", err)
 	}
 
-	log.Println("Server exited properly")
+	log.Println("Server gracefully stopped")
 }
 
-// Custom error handler
+// customErrorHandler handles errors in a structured way
 func customErrorHandler(c *fiber.Ctx, err error) error {
-	// Default 500 status code
+	// Default to 500 Internal Server Error
 	code := fiber.StatusInternalServerError
-
+	
 	// Check if it's a Fiber error
 	if e, ok := err.(*fiber.Error); ok {
 		code = e.Code
 	}
-
-	// Return JSON response
+	
+	// Log the error
+	log.Printf("HTTP Error [%d]: %v", code, err)
+	
+	// Return JSON error response
 	return c.Status(code).JSON(fiber.Map{
-		"error": err.Error(),
+		"error": true,
+		"message": err.Error(),
+		"status": code,
 	})
 } 
