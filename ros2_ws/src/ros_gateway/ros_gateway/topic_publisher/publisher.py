@@ -38,7 +38,7 @@ class TopicPublisher:
             direction = mapping.get('direction', defaults.get('direction', 'OUTBOUND'))
             if direction == 'INBOUND':
                 inbound_topics.append(mapping)
-                self.logger.info(f"Would publish to: {mapping['ott']} -> {mapping['ros_topic']}")
+                self.logger.info(f"Setting up publisher: {mapping['ott']} -> {mapping['ros_topic']}")
                 
                 # Create real publisher based on message type
                 msg_type = mapping.get('message_type')
@@ -48,10 +48,10 @@ class TopicPublisher:
                         mapping['ros_topic'],
                         10  # QoS profile depth
                     )
-                    self.logger.info(f"Created real publisher for {mapping['ros_topic']}")
+                    self.logger.info(f"Created publisher for {mapping['ros_topic']} of type Twist")
                     self.logger.info(f"Publisher key in dictionary: '{mapping['ott']}'")
                 
-        self.logger.info(f"Would set up {len(inbound_topics)} publishers if implemented")
+        self.logger.info(f"Successfully set up {len(self.publishers)} publishers")
         self.logger.info(f"Available publisher keys: {list(self.publishers.keys())}")
         
         # Now actually start receiving messages for testing

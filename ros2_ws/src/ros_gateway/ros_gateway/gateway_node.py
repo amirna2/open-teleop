@@ -94,7 +94,7 @@ class RosGateway(Node):
         # Log each topic mapping with its keys
         for i, mapping in enumerate(topic_mappings):
             self.logger.info(f"Topic mapping {i+1}: {json.dumps(mapping)}")
-            self.logger.info(f"  Keys: {list(mapping.keys())}")
+            self.logger.debug(f"  Keys: {list(mapping.keys())}")
         
         # Get defaults
         defaults = self.config.get('defaults', {})

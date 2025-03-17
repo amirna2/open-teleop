@@ -123,7 +123,7 @@ class ZmqClient:
                 self.logger.error(f"ZmqClient: Error requesting configuration: {e}")
             return None
     
-    def start_receiving(self, topic, callback):
+    def start_receiving(self, teleop_topic, callback):
         """
         Start receiving messages from the controller on a specific topic.
         
@@ -131,16 +131,16 @@ class ZmqClient:
             topic: Topic to subscribe to (e.g., "teleop.control.velocity")
             callback: Function to call when a message is received
         """
-        if topic not in self.callbacks:
-            self.callbacks[topic] = []
+        if teleop_topic not in self.callbacks:
+            self.callbacks[teleop_topic] = []
         
-        self.callbacks[topic].append(callback)
+        self.callbacks[teleop_topic].append(callback)
         
         # Subscribe to the topic
-        self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, topic)
+        self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, teleop_topic)
         
         if self.logger:
-            self.logger.info(f"ZmqClient: Subscribed to topic: {topic}")
+            self.logger.info(f"ZmqClient: Subscribed to message on teleop-topic: {teleop_topic}")
         
         if not self.running:
             self.running = True
