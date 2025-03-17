@@ -7,7 +7,9 @@ import os
 import sys
 import signal
 import yaml
-from threading import Thread
+import json
+import time
+from threading import Thread, Event
 
 # Import custom logger
 import open_teleop_logger as log
@@ -57,18 +59,29 @@ class RosGateway(Node):
         self.logger.info('Starting ROS Gateway for Open-Teleop')
         self.logger.info(f'Project root: {self.project_root}')
         
-        # Load configuration - try project config first, then fall back to package config
-        project_config_path = os.path.join(self.project_root, 'config/gateway_config_sample.yaml')
-        package_config_path = os.path.join(os.path.dirname(__file__), '../config/gateway_config.yaml')
+        # Initialize the message converter
+        self.converter = MessageConverter()
         
-        config_path = self.declare_parameter('config_path', project_config_path).value
-        if not os.path.exists(config_path):
-            self.logger.warning(f"Config file not found at {config_path}, falling back to package config")
-            config_path = package_config_path
-            
-        self.logger.info(f"Loading configuration from: {config_path}")
-        self.config_loader = ConfigLoader(config_path)
-        self.config = self.config_loader.load_config()
+        # Get ZeroMQ configuration from environment variables with fallback defaults
+        controller_address = os.environ.get('TELEOP_ZMQ_CONTROLLER_ADDRESS', 'tcp://localhost:5555')
+        publish_address = os.environ.get('TELEOP_ZMQ_PUBLISH_ADDRESS', 'tcp://*:5556')
+        message_buffer_size = int(os.environ.get('TELEOP_ZMQ_BUFFER_SIZE', '1000'))
+        reconnect_interval_ms = int(os.environ.get('TELEOP_ZMQ_RECONNECT_INTERVAL_MS', '1000'))
+        
+        self.logger.info(f"Using ZMQ controller address: {controller_address}")
+        self.logger.info(f"Using ZMQ publish address: {publish_address}")
+        
+        # Initialize the ZeroMQ client early with bootstrap configuration
+        self.zmq_client = ZmqClient(
+            controller_address=controller_address,
+            publish_address=publish_address,
+            buffer_size=message_buffer_size,
+            reconnect_interval_ms=reconnect_interval_ms,
+            logger=self.logger
+        )
+        
+        # Request configuration from the controller
+        self.config = self.request_configuration()
         
         # Display config info
         self.logger.info(f"Loaded configuration version: {self.config.get('version')}")
@@ -78,42 +91,17 @@ class RosGateway(Node):
         # Configure logging
         self._configure_logging()
         
-        # Initialize the message converter
-        self.converter = MessageConverter()
-        
-        # Get ZeroMQ configuration
-        zmq_config = self.config_loader.get_zmq_config()
-        
-        # Override with environment variables if set
-        if 'TELEOP_ZMQ_CONTROLLER_ADDRESS' in os.environ:
-            zmq_config['controller_address'] = os.environ['TELEOP_ZMQ_CONTROLLER_ADDRESS']
-            self.logger.info(f"Using controller address from environment: {zmq_config['controller_address']}")
-            
-        if 'TELEOP_ZMQ_PUBLISH_ADDRESS' in os.environ:
-            zmq_config['publish_address'] = os.environ['TELEOP_ZMQ_PUBLISH_ADDRESS']
-            self.logger.info(f"Using publish address from environment: {zmq_config['publish_address']}")
-        
-        # Initialize the ZeroMQ client
-        self.logger.info(f"ZMQ Controller address: {zmq_config['controller_address']}")
-        self.zmq_client = ZmqClient(
-            controller_address=zmq_config['controller_address'],
-            publish_address=zmq_config['publish_address'],
-            buffer_size=zmq_config['message_buffer_size'],
-            reconnect_interval_ms=zmq_config['reconnect_interval_ms'],
-            logger=self.logger
-        )
-        
         # Get topic mappings
         topic_mappings = self.config.get('topic_mappings', [])
         defaults = self.config.get('defaults', {})
         
         # Log topic mapping info
-        ros2_topics = self.config_loader.get_topic_mappings_by_source_type('ROS2_CDM')
-        ot_topics = self.config_loader.get_topic_mappings_by_source_type('OPEN_TELEOP')
+        ros2_topics = self.filter_topic_mappings_by_source_type(topic_mappings, defaults, 'ROS2_CDM')
+        ot_topics = self.filter_topic_mappings_by_source_type(topic_mappings, defaults, 'OPEN_TELEOP')
         self.logger.info(f"Found {len(ros2_topics)} ROS2 topics and {len(ot_topics)} Open-Teleop topics")
         
-        inbound_topics = self.config_loader.get_topic_mappings_by_direction('INBOUND')
-        outbound_topics = self.config_loader.get_topic_mappings_by_direction('OUTBOUND')
+        inbound_topics = self.filter_topic_mappings_by_direction(topic_mappings, defaults, 'INBOUND')
+        outbound_topics = self.filter_topic_mappings_by_direction(topic_mappings, defaults, 'OUTBOUND')
         self.logger.info(f"Found {len(inbound_topics)} inbound topics and {len(outbound_topics)} outbound topics")
         
         # Initialize the topic manager (for ROS2 topics only)
@@ -177,6 +165,114 @@ class RosGateway(Node):
         if hasattr(self, 'topic_publisher'):
             self.topic_publisher.shutdown()
         self.logger.info('Shutdown complete')
+    
+    def request_configuration(self):
+        """
+        Request configuration from the controller.
+        
+        Returns:
+            Dict containing the configuration received from the controller
+        """
+        self.logger.info("Requesting configuration from controller...")
+        
+        # Try to get configuration directly from the controller using our ZmqClient
+        config = self.zmq_client.request_config()
+        
+        if config is not None:
+            self.logger.info("Successfully received configuration from controller")
+            
+            # Subscribe to configuration updates
+            self.zmq_client.subscribe_to_config_updates(self.handle_config_update)
+            
+            return config
+        
+        # Fallback to local configuration if controller request fails
+        self.logger.warning("Failed to get configuration from controller, using default configuration")
+        
+        # Use empty default configuration as fallback
+        return {
+            "version": "1.0",
+            "config_id": "default",
+            "lastUpdated": time.time(),
+            "robot_id": os.environ.get('TELEOP_ROBOT_ID', 'unknown'),
+            "topic_mappings": [],
+            "defaults": {
+                "priority": "STANDARD",
+                "direction": "OUTBOUND",
+                "source_type": "ROS2_CDM"
+            },
+            "settings": {
+                "message_buffer_size": 1000,
+                "reconnect_interval_ms": 1000
+            }
+        }
+    
+    def handle_config_update(self, message):
+        """
+        Handle configuration updates from the controller.
+        
+        Args:
+            message: The configuration update message
+        """
+        try:
+            data = json.loads(message)
+            
+            if data.get('type') == 'CONFIG_UPDATE':
+                self.logger.info("Received configuration update from controller")
+                new_config = data.get('data', {})
+                
+                # Store the new configuration
+                self.config = new_config
+                
+                # Display config info
+                self.logger.info(f"Updated configuration version: {self.config.get('version')}")
+                self.logger.info(f"Config ID: {self.config.get('config_id')}")
+                
+                # TODO: Implement dynamic reconfiguration based on the new config
+                self.logger.warning("Dynamic reconfiguration not implemented yet")
+                
+            elif data.get('type') == 'CONFIG_UPDATED':
+                self.logger.info("Received notification that configuration has changed")
+                
+                # Proactively request the new configuration
+                self.config = self.zmq_client.request_config()
+                
+                if self.config is not None:
+                    self.logger.info("Successfully received updated configuration")
+                    # TODO: Implement dynamic reconfiguration
+                
+        except Exception as e:
+            self.logger.error(f"Error processing configuration update: {e}")
+    
+    def filter_topic_mappings_by_source_type(self, topic_mappings, defaults, source_type):
+        """Filter topic mappings by source type (replacement for config_loader method)"""
+        default_source_type = defaults.get('source_type')
+        result = []
+        
+        for mapping in topic_mappings:
+            map_source_type = mapping.get('source_type', default_source_type)
+            if map_source_type == source_type:
+                # Apply defaults for missing values
+                config = defaults.copy()
+                config.update(mapping)
+                result.append(config)
+                
+        return result
+    
+    def filter_topic_mappings_by_direction(self, topic_mappings, defaults, direction):
+        """Filter topic mappings by direction (replacement for config_loader method)"""
+        default_direction = defaults.get('direction', 'OUTBOUND')
+        result = []
+        
+        for mapping in topic_mappings:
+            map_direction = mapping.get('direction', default_direction)
+            if map_direction == direction:
+                # Apply defaults for missing values
+                config = defaults.copy()
+                config.update(mapping)
+                result.append(config)
+                
+        return result
 
 
 def main(args=None):

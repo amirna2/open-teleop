@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-# zmq_client.py - Enhanced stub implementation for ZeroMQ client
+# zmq_client.py - Implementation for ZeroMQ client
 
 import threading
 import time
 import json
-import random
+import zmq
+import logging
 
 class ZmqClient:
     """
-    Enhanced stub implementation of the ZeroMQ client for the ROS Gateway.
-    Includes simulation of inbound messages for testing.
+    Implementation of the ZeroMQ client for the ROS Gateway.
+    Handles communication with the Open-Teleop Controller.
     """
     
     def __init__(self, controller_address, publish_address, buffer_size=1000, 
@@ -19,7 +20,7 @@ class ZmqClient:
         
         Args:
             controller_address: Address to connect to for sending messages to controller
-            publish_address: Address to bind to for receiving messages from controller
+            publish_address: Address to connect to for receiving messages from controller
             buffer_size: Size of the message buffer
             reconnect_interval_ms: Reconnection interval in milliseconds
             logger: Logger instance
@@ -29,83 +30,172 @@ class ZmqClient:
         self.buffer_size = buffer_size
         self.reconnect_interval_ms = reconnect_interval_ms
         self.logger = logger
-        self.callbacks = []
+        self.callbacks = {}
         self.running = False
         self.receive_thread = None
         
+        # Set up ZMQ context
+        self.context = zmq.Context()
+        self.req_socket = None
+        self.sub_socket = None
+        
+        # Initialize sockets
+        self._initialize_sockets()
+        
         if logger:
-            logger.info(f"ZmqClient stub initialized with controller_address={controller_address}")
+            logger.info(f"ZmqClient initialized: controller={controller_address}, pub={publish_address}")
+    
+    def _initialize_sockets(self):
+        """Initialize ZeroMQ sockets"""
+        # REQ socket for request-reply pattern
+        self.req_socket = self.context.socket(zmq.REQ)
+        self.req_socket.connect(self.controller_address)
+        
+        # SUB socket for subscription pattern
+        self.sub_socket = self.context.socket(zmq.SUB)
+        self.sub_socket.connect(self.publish_address)
+        
+        if self.logger:
+            self.logger.info(f"ZmqClient: Sockets initialized and connected")
     
     def send_message(self, message):
         """
-        Stub method for sending a message to the controller.
+        Send a message to the controller.
         
         Args:
-            message: The message to send
+            message: The message to send (JSON string)
+        
+        Returns:
+            Reply message from the controller
         """
+        if not isinstance(message, str):
+            message = json.dumps(message)
+            
         if self.logger:
-            self.logger.info(f"ZmqClient stub: send_message called with: {message[:100]}...")
+            self.logger.info(f"ZmqClient: Sending message: {message[:100]}...")
         
-    def start_receiving(self, callback):
+        try:
+            self.req_socket.send_string(message)
+            reply = self.req_socket.recv_string()
+            
+            if self.logger:
+                self.logger.info(f"ZmqClient: Received reply: {reply[:100]}...")
+                
+            return reply
+        except zmq.ZMQError as e:
+            if self.logger:
+                self.logger.error(f"ZmqClient: Error sending message: {e}")
+            return None
+    
+    def request_config(self):
         """
-        Start simulating message reception from the controller.
+        Request configuration from the controller.
+        
+        Returns:
+            Configuration dictionary or None if request failed
+        """
+        config_request = {
+            "type": "CONFIG_REQUEST",
+            "timestamp": time.time()
+        }
+        
+        if self.logger:
+            self.logger.info("ZmqClient: Requesting configuration from controller")
+        
+        try:
+            response_str = self.send_message(config_request)
+            if response_str:
+                response = json.loads(response_str)
+                if response["type"] == "CONFIG_RESPONSE":
+                    if self.logger:
+                        self.logger.info("ZmqClient: Received configuration from controller")
+                    return response["data"]
+                else:
+                    if self.logger:
+                        self.logger.warning(f"ZmqClient: Unexpected response type: {response['type']}")
+            return None
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"ZmqClient: Error requesting configuration: {e}")
+            return None
+    
+    def start_receiving(self, topic, callback):
+        """
+        Start receiving messages from the controller on a specific topic.
         
         Args:
+            topic: Topic to subscribe to (e.g., "teleop.control.velocity")
             callback: Function to call when a message is received
         """
-        if self.logger:
-            self.logger.info("ZmqClient stub: start_receiving called with simulation enabled")
+        if topic not in self.callbacks:
+            self.callbacks[topic] = []
         
-        self.callbacks.append(callback)
+        self.callbacks[topic].append(callback)
+        
+        # Subscribe to the topic
+        self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, topic)
+        
+        if self.logger:
+            self.logger.info(f"ZmqClient: Subscribed to topic: {topic}")
         
         if not self.running:
             self.running = True
-            self.receive_thread = threading.Thread(target=self._simulate_receive, daemon=True)
+            self.receive_thread = threading.Thread(target=self._receive_loop, daemon=True)
             self.receive_thread.start()
     
-    def _simulate_receive(self):
-        """Simulate receiving messages from the controller periodically"""
+    def subscribe_to_config_updates(self, callback):
+        """
+        Subscribe to configuration updates from the controller.
+        
+        Args:
+            callback: Function to call when a configuration update is received
+        """
+        self.start_receiving("configuration.", callback)
+    
+    def _receive_loop(self):
+        """Main loop for receiving messages from the controller"""
         if self.logger:
-            self.logger.info("ZmqClient stub: Starting message simulation thread")
+            self.logger.info("ZmqClient: Starting receive loop")
+        
+        poller = zmq.Poller()
+        poller.register(self.sub_socket, zmq.POLLIN)
         
         while self.running:
-            # Wait for a random interval between 1-5 seconds
-            time.sleep(random.uniform(1.0, 5.0))
-            
-            # Create a simulated velocity command
-            message = self._create_simulated_velocity_command()
-            
-            if self.logger:
-                self.logger.info(f"ZmqClient stub: Simulating received message: {message}")
-            
-            # Call all registered callbacks with the simulated message
-            for callback in self.callbacks:
-                callback(message)
-    
-    def _create_simulated_velocity_command(self):
-        """Create a simulated velocity command message"""
-        # Simulate random motion commands
-        linear_x = random.uniform(-0.5, 0.5)  # m/s
-        angular_z = random.uniform(-0.3, 0.3)  # rad/s
-        
-        # Create a simple mock message format
-        # In a real implementation, this would be properly formatted according to the protocol
-        mock_message = {
-            "topic": "teleop.control.velocity",
-            "timestamp": time.time(),
-            "data": {
-                "linear": {"x": linear_x, "y": 0.0, "z": 0.0},
-                "angular": {"x": 0.0, "y": 0.0, "z": angular_z}
-            }
-        }
-        
-        return json.dumps(mock_message)
+            try:
+                socks = dict(poller.poll(timeout=100))
+                
+                if self.sub_socket in socks and socks[self.sub_socket] == zmq.POLLIN:
+                    # Receive the topic and message
+                    topic = self.sub_socket.recv_string()
+                    message = self.sub_socket.recv_string()
+                    
+                    if self.logger:
+                        self.logger.debug(f"ZmqClient: Received message on topic {topic}")
+                    
+                    # Find matching topic callbacks
+                    for registered_topic, callbacks in self.callbacks.items():
+                        if topic.startswith(registered_topic):
+                            for callback in callbacks:
+                                callback(message)
+            except zmq.ZMQError as e:
+                if self.logger:
+                    self.logger.error(f"ZmqClient: Error in receive loop: {e}")
+                time.sleep(0.1)  # Short sleep to avoid tight loop on error
     
     def shutdown(self):
-        """Shutdown the client and stop simulation."""
+        """Shutdown the client and clean up resources."""
         if self.logger:
-            self.logger.info("ZmqClient stub: shutdown called")
+            self.logger.info("ZmqClient: Shutting down")
         
         self.running = False
+        
         if self.receive_thread and self.receive_thread.is_alive():
-            self.receive_thread.join(timeout=1.0) 
+            self.receive_thread.join(timeout=1.0)
+        
+        if self.req_socket:
+            self.req_socket.close()
+        
+        if self.sub_socket:
+            self.sub_socket.close()
+        
+        self.context.term() 
