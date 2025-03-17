@@ -143,19 +143,19 @@ class ConfigLoader:
             raise ConfigValidationError(f"Missing 'source_type' in topic mapping {idx}")
             
         source_type = mapping.get('source_type', defaults.get('source_type'))
-        valid_source_types = ['ROS2_CDM', 'OPEN_TELEOP']
+        valid_source_types = ['ROS2_CDR', 'OPEN_TELEOP']
         if source_type not in valid_source_types:
             raise ConfigValidationError(
                 f"Invalid source_type '{source_type}' in topic mapping {idx}. "
                 f"Must be one of {valid_source_types}"
             )
             
-        # ROS2_CDM mappings must have ros_topic and message_type
-        if source_type == 'ROS2_CDM':
+        # ROS2_CDR mappings must have ros_topic and message_type
+        if source_type == 'ROS2_CDR':
             for key in ['ros_topic', 'message_type']:
                 if key not in mapping:
                     raise ConfigValidationError(
-                        f"Missing required key '{key}' for ROS2_CDM topic mapping {idx}"
+                        f"Missing required key '{key}' for ROS2_CDR topic mapping {idx}"
                     )
         
         # Validate priority if present
@@ -193,7 +193,7 @@ class ConfigLoader:
         defaults = self.config.get('defaults', {})
         
         for mapping in topic_mappings:
-            if mapping.get('source_type', defaults.get('source_type')) == 'ROS2_CDM' and mapping.get('ros_topic') == ros_topic:
+            if mapping.get('source_type', defaults.get('source_type')) == 'ROS2_CDR' and mapping.get('ros_topic') == ros_topic:
                 # Apply defaults for missing values
                 result = defaults.copy()
                 result.update(mapping)
@@ -234,7 +234,7 @@ class ConfigLoader:
         Get all topic mappings with the specified source type.
         
         Args:
-            source_type: The source type to filter by ('ROS2_CDM' or 'OPEN_TELEOP')
+            source_type: The source type to filter by ('ROS2_CDR' or 'OPEN_TELEOP')
             
         Returns:
             List of topic mappings with the specified source type

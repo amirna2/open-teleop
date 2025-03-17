@@ -61,7 +61,7 @@ class MockTopicManager:
         
         # Create subscribers for all outbound topics
         for mapping in topic_mappings:
-            if mapping.get('direction') == 'OUTBOUND' and mapping.get('source_type') == 'ROS2_CDM':
+            if mapping.get('direction') == 'OUTBOUND' and mapping.get('source_type') == 'ROS2_CDR':
                 self._create_subscriber(mapping)
                 
     def _create_subscriber(self, mapping):
@@ -100,7 +100,7 @@ class MockTopicPublisher:
         
         # Create publishers for all inbound topics
         for mapping in topic_mappings:
-            if mapping.get('direction') == 'INBOUND' and mapping.get('source_type') == 'ROS2_CDM':
+            if mapping.get('direction') == 'INBOUND' and mapping.get('source_type') == 'ROS2_CDR':
                 self._create_publisher(mapping)
                 
     def _create_publisher(self, mapping):
@@ -207,7 +207,7 @@ def main():
         zmq_client.connect()
         
         # Get topic mappings by type and direction
-        ros2_topics = config_loader.get_topic_mappings_by_source_type('ROS2_CDM')
+        ros2_topics = config_loader.get_topic_mappings_by_source_type('ROS2_CDR')
         inbound_topics = config_loader.get_topic_mappings_by_direction('INBOUND')
         outbound_topics = config_loader.get_topic_mappings_by_direction('OUTBOUND')
         

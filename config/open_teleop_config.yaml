@@ -39,7 +39,7 @@ topic_mappings:
     priority: "STANDARD"
     message_type: "sensor_msgs/msg/BatteryState"
     direction: "OUTBOUND"
-    source_type: "ROS2_CDM"
+    source_type: "ROS2_CDR"
   
   # Robot control (INBOUND - from controller to ROS)
   - ros_topic: "/cmd_vel"
@@ -47,13 +47,13 @@ topic_mappings:
     priority: "HIGH"
     message_type: "geometry_msgs/msg/Twist"
     direction: "INBOUND"
-    source_type: "ROS2_CDM"
+    source_type: "ROS2_CDR"
 
 # Default settings for topics
 defaults:
   priority: "STANDARD"
   direction: "OUTBOUND"
-  source_type: "ROS2_CDM"
+  source_type: "ROS2_CDR"
 
 # Throttling settings per priority level (0 = no throttling)
 throttle_rates:

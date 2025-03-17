@@ -209,7 +209,7 @@ class RosGateway(Node):
             "defaults": {
                 "priority": "STANDARD",
                 "direction": "OUTBOUND",
-                "source_type": "ROS2_CDM"
+                "source_type": "ROS2_CDR"
             },
             "settings": {
                 "message_buffer_size": 1000,

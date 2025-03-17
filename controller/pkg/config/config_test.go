@@ -47,19 +47,19 @@ topic_mappings:
     priority: "STANDARD"
     message_type: "sensor_msgs/msg/BatteryState"
     direction: "OUTBOUND"
-    source_type: "ROS2_CDM"
+    source_type: "ROS2_CDR"
   
   - ros_topic: "/cmd_vel"
     ott: "teleop.control.velocity"
     priority: "HIGH"
     message_type: "geometry_msgs/msg/Twist"
     direction: "INBOUND"
-    source_type: "ROS2_CDM"
+    source_type: "ROS2_CDR"
 
 defaults:
   priority: "STANDARD"
   direction: "OUTBOUND"
-  source_type: "ROS2_CDM"
+  source_type: "ROS2_CDR"
 
 throttle_rates:
   high_hz: 0
@@ -164,19 +164,19 @@ topic_mappings:
     priority: "STANDARD"
     message_type: "sensor_msgs/msg/BatteryState"
     direction: "OUTBOUND"
-    source_type: "ROS2_CDM"
+    source_type: "ROS2_CDR"
   
   - ros_topic: "/cmd_vel"
     ott: "teleop.control.velocity"
     priority: "HIGH"
     message_type: "geometry_msgs/msg/Twist"
     direction: "INBOUND"
-    source_type: "ROS2_CDM"
+    source_type: "ROS2_CDR"
 
 defaults:
   priority: "STANDARD"
   direction: "OUTBOUND"
-  source_type: "ROS2_CDM"
+  source_type: "ROS2_CDR"
 
 throttle_rates:
   high_hz: 0
@@ -265,14 +265,14 @@ topic_mappings:
     priority: "STANDARD"
     message_type: "sensor_msgs/msg/BatteryState"
     direction: "OUTBOUND"
-    source_type: "ROS2_CDM"
+    source_type: "ROS2_CDR"
   
   - ros_topic: "/cmd_vel"
     ott: "teleop.control.velocity"
     priority: "HIGH"
     message_type: "geometry_msgs/msg/Twist"
     direction: "INBOUND"
-    source_type: "ROS2_CDM"
+    source_type: "ROS2_CDR"
     
   - ott: "teleop.diagnostic.system_metrics"
     priority: "LOW"
@@ -282,7 +282,7 @@ topic_mappings:
 defaults:
   priority: "STANDARD"
   direction: "OUTBOUND"
-  source_type: "ROS2_CDM"
+  source_type: "ROS2_CDR"
 
 throttle_rates:
   high_hz: 0
@@ -343,7 +343,7 @@ func TestTopicMappingHelpers(t *testing.T) {
 				Priority:    "STANDARD",
 				MessageType: "sensor_msgs/msg/BatteryState",
 				Direction:   "OUTBOUND",
-				SourceType:  "ROS2_CDM",
+				SourceType:  "ROS2_CDR",
 			},
 			{
 				RosTopic:    "/cmd_vel",
@@ -351,20 +351,20 @@ func TestTopicMappingHelpers(t *testing.T) {
 				Priority:    "HIGH",
 				MessageType: "geometry_msgs/msg/Twist",
 				Direction:   "INBOUND",
-				SourceType:  "ROS2_CDM",
+				SourceType:  "ROS2_CDR",
 			},
 			{
 				// Missing direction, will use default
 				RosTopic:    "/robot_state",
 				OttTopic:    "teleop.robot.state",
 				MessageType: "std_msgs/msg/String",
-				SourceType:  "ROS2_CDM",
+				SourceType:  "ROS2_CDR",
 			},
 		},
 		Defaults: DefaultsConfig{
 			Priority:   "STANDARD",
 			Direction:  "OUTBOUND",
-			SourceType: "ROS2_CDM",
+			SourceType: "ROS2_CDR",
 		},
 	}
 

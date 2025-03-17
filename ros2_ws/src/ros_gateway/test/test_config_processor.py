@@ -39,7 +39,7 @@ def main():
         print(f"Robot ID: {config.get('robot_id')}")
         
         # Print topic mapping counts
-        ros2_topics = config_loader.get_topic_mappings_by_source_type('ROS2_CDM')
+        ros2_topics = config_loader.get_topic_mappings_by_source_type('ROS2_CDR')
         ot_topics = config_loader.get_topic_mappings_by_source_type('OPEN_TELEOP')
         print(f"\nFound {len(ros2_topics)} ROS2 topics and {len(ot_topics)} Open-Teleop topics")
         
