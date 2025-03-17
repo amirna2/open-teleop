@@ -2,17 +2,23 @@ package main
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	
+	// Import our configuration package
+	"github.com/open-teleop/controller/pkg/config"
 	// Import domain services
-	"github.com/open-teleop/controller/domain/diagnostic"
+	// "github.com/open-teleop/controller/domain/diagnostic"
 	// "github.com/open-teleop/controller/domain/teleop"
 	// "github.com/open-teleop/controller/domain/video"
 	// "github.com/open-teleop/controller/domain/audio"
@@ -21,67 +27,112 @@ import (
 )
 
 func main() {
+	// Parse command line flags
+	environment := flag.String("env", "", "Environment (development, testing, production)")
+	configDir := flag.String("config-dir", "./config", "Path to configuration directory")
+	flag.Parse()
+
+	// Find executable directory for relative paths
+	execPath, err := os.Executable()
+	if err != nil {
+		log.Fatalf("Error determining executable path: %v", err)
+	}
+	execDir := filepath.Dir(execPath)
+	
+	// If config-dir is relative, make it relative to the executable
+	if !filepath.IsAbs(*configDir) {
+		if *configDir == "./config" {
+			// Special case for default, try to find config relative to project root
+			// Check if "config" exists in current directory
+			if _, err := os.Stat("./config"); os.IsNotExist(err) {
+				// Try parent directory of executable
+				parentDir := filepath.Dir(execDir)
+				candidateConfigDir := filepath.Join(parentDir, "config")
+				if _, err := os.Stat(candidateConfigDir); err == nil {
+					*configDir = candidateConfigDir
+				} else {
+					// Try relative to GOPATH
+					gopath := os.Getenv("GOPATH")
+					if gopath != "" {
+						srcDir := filepath.Join(gopath, "src", "github.com", "open-teleop", "controller")
+						candidateConfigDir = filepath.Join(srcDir, "..", "config")
+						if _, err := os.Stat(candidateConfigDir); err == nil {
+							*configDir = candidateConfigDir
+						}
+					}
+				}
+			}
+		} else {
+			*configDir = filepath.Join(execDir, *configDir)
+		}
+	}
+
+	// Load configuration
+	log.Printf("Loading configuration from %s for environment %s", *configDir, *environment)
+	cfg, err := config.LoadConfigWithEnv(*configDir, *environment)
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	log.Printf("Loaded configuration for environment: %s", cfg.Environment)
+	log.Printf("ZeroMQ receiver address: %s", cfg.ZeroMQ.ReceiverAddress)
+	log.Printf("ZeroMQ publisher address: %s", cfg.ZeroMQ.PublisherAddress)
+
 	// Create a new Fiber app
 	app := fiber.New(fiber.Config{
 		AppName:      "Open-Teleop Controller",
 		ErrorHandler: customErrorHandler,
+		// Use config for server settings
+		ReadTimeout:  time.Duration(cfg.Server.RequestTimeout) * time.Second,
+		BodyLimit:    cfg.Server.MaxRequestSize * 1024 * 1024, // Convert MB to bytes
 	})
 
 	// Add middleware
 	app.Use(logger.New())
 	app.Use(recover.New())
 
-	// Get port from environment variable or use default
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
-	// Initialize domain services
-	diagnosticService := diagnostic.NewDiagnosticService()
-	// Start listening for metrics from ROS2 bridge
-	if err := diagnosticService.StartMetricsListener(); err != nil {
-		log.Printf("Warning: Failed to start metrics listener: %v\n", err)
-	}
-	
-	// teleopService := teleop.NewTeleopService()
-	// videoService := video.NewVideoService()
-	// audioService := audio.NewAudioService()
-	// sensorService := sensor.NewSensorService()
-	// navigationService := navigation.NewNavigationService()
+	// Initialize services
+	// TODO: Initialize ZeroMQ server and other service components with config
 
 	// Set up basic routes
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"status":  "online",
-			"service": "open-teleop controller",
+			"status":      "online",
+			"service":     "open-teleop controller",
+			"environment": cfg.Environment,
+			"version":     cfg.Version,
 		})
 	})
 
 	// Health check endpoint
 	app.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"status": "healthy"})
+		return c.JSON(fiber.Map{
+			"status": "healthy",
+			"config": map[string]interface{}{
+				"environment":     cfg.Environment,
+				"zmq_receiver":    cfg.ZeroMQ.ReceiverAddress,
+				"zmq_publisher":   cfg.ZeroMQ.PublisherAddress,
+				"high_workers":    cfg.Processing.HighPriorityWorkers,
+				"standard_workers": cfg.Processing.StandardPriorityWorkers,
+				"low_workers":     cfg.Processing.LowPriorityWorkers,
+			},
+		})
 	})
 	
 	// Set up API routes
-	api := app.Group("/api")
+	// Commented out for now until we implement service routes
+	// api := app.Group("/api")
 	
-	// Diagnostic routes
-	diagnosticRoutes := api.Group("/diagnostics")
-	diagnosticRoutes.Get("/", diagnosticService.GetMetricsHandler)
-
-	// TODO: Set up other domain service routes
+	// TODO: Set up service routes
 	// Example:
 	// teleop := api.Group("/teleop")
 	// teleop.Post("/command", teleopService.CommandHandler)
-	
-	// video := api.Group("/video")
-	// video.Get("/stream", videoService.StreamHandler)
 
 	// Start server in a goroutine
+	serverPort := fmt.Sprintf(":%d", cfg.Server.Port)
 	go func() {
-		log.Printf("Server starting on port %s\n", port)
-		if err := app.Listen(":" + port); err != nil {
+		log.Printf("Server starting on port %d\n", cfg.Server.Port)
+		if err := app.Listen(serverPort); err != nil {
 			log.Fatalf("Failed to start server: %v\n", err)
 		}
 	}()

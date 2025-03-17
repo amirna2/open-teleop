@@ -1,0 +1,25 @@
+# Controller Configuration - TESTING Environment
+version: "1.0"
+config_id: "2e8f7a4d-6c01-4bb8-9e4a-8e72f9a5a9f1"
+lastUpdated: "2025-03-16T10:00:00Z"
+environment: "testing"
+
+# ZeroMQ Settings - Testing
+zeromq:
+  # In testing, accept connections from any interface
+  receiver_address: "tcp://*:5555"
+  publisher_address: "tcp://*:5556"
+  message_queue_size: 1000
+  timeout_ms: 1000
+
+# HTTP API Server Settings - Testing
+server:
+  port: 8080
+  request_timeout: 30
+  max_request_size: 10
+
+# Message Processing Settings - Testing (medium worker count)
+processing:
+  high_priority_workers: 3
+  standard_priority_workers: 2
+  low_priority_workers: 1 
