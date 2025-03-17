@@ -17,13 +17,6 @@ import (
 	
 	// Import our configuration package
 	"github.com/open-teleop/controller/pkg/config"
-	// Import domain services
-	// "github.com/open-teleop/controller/domain/diagnostic"
-	// "github.com/open-teleop/controller/domain/teleop"
-	// "github.com/open-teleop/controller/domain/video"
-	// "github.com/open-teleop/controller/domain/audio"
-	// "github.com/open-teleop/controller/domain/sensor"
-	// "github.com/open-teleop/controller/domain/navigation"
 )
 
 func main() {

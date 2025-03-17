@@ -5,9 +5,16 @@ config_id: "3f7ac68a-7e3a-4d4b-b9d6-5d0b267e5e8c"
 lastUpdated: "2025-03-16T10:00:00Z"
 robot_id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
 
-# Topic mappings configuration
+# ZeroMQ settings
+settings:
+  # Message buffer size for ZeroMQ sockets
+  message_buffer_size: 1000
+  # Reconnect interval in milliseconds
+  reconnect_interval_ms: 1000
+
+# Topics to handle
 topic_mappings:
-  # Sensor data (OUTBOUND - from ROS to controller)
+  # Battery state topic (OUTBOUND - from ROS to controller)
   - ros_topic: "/battery_state"
     ott: "teleop.sensor.battery"
     priority: "STANDARD"
@@ -15,34 +22,16 @@ topic_mappings:
     direction: "OUTBOUND"
     source_type: "ROS2_CDM"
   
-  # Robot control (INBOUND - from controller to ROS)
+  # Command velocity topic (INBOUND - from controller to ROS)
   - ros_topic: "/cmd_vel"
     ott: "teleop.control.velocity"
     priority: "HIGH"
     message_type: "geometry_msgs/msg/Twist"
     direction: "INBOUND"
     source_type: "ROS2_CDM"
-    
-  # System metrics (custom Open-Teleop defined message)
-  - ott: "teleop.diagnostic.system_metrics"
-    priority: "LOW"
-    source_type: "OPEN_TELEOP"
-    direction: "OUTBOUND"
 
 # Default settings for topics
 defaults:
   priority: "STANDARD"
   direction: "OUTBOUND"
-  source_type: "ROS2_CDM"
-
-# Gateway behavior settings
-settings:
-  # Buffer and reconnection settings
-  message_buffer_size: 1000
-  reconnect_interval_ms: 1000
-  
-  # Optional throttling settings per priority level (0 = no throttling)
-  throttle_rates:
-    high_hz: 0
-    standard_hz: 10
-    low_hz: 1 
+  source_type: "ROS2_CDM" 

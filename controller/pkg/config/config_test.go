@@ -82,15 +82,15 @@ throttle_rates:
 	if config.Version != "1.0" {
 		t.Errorf("Expected version 1.0, got %s", config.Version)
 	}
-	
+
 	if config.ConfigID != "test-config" {
 		t.Errorf("Expected config_id test-config, got %s", config.ConfigID)
 	}
-	
+
 	if config.Environment != "testing" {
 		t.Errorf("Expected environment testing, got %s", config.Environment)
 	}
-	
+
 	if config.RobotID != "test-robot-id" {
 		t.Errorf("Expected robot_id test-robot-id, got %s", config.RobotID)
 	}
@@ -99,7 +99,7 @@ throttle_rates:
 	if config.Controller.Server.Port != 8080 {
 		t.Errorf("Expected port 8080, got %d", config.Controller.Server.Port)
 	}
-	
+
 	if config.Controller.Processing.HighPriorityWorkers != 4 {
 		t.Errorf("Expected high_priority_workers 4, got %d", config.Controller.Processing.HighPriorityWorkers)
 	}
@@ -108,16 +108,16 @@ throttle_rates:
 	if config.ZeroMQ.ControllerAddress != "tcp://*:5555" {
 		t.Errorf("Expected controller_address tcp://*:5555, got %s", config.ZeroMQ.ControllerAddress)
 	}
-	
+
 	if config.ZeroMQ.MessageBufferSize != 1000 {
 		t.Errorf("Expected message_buffer_size 1000, got %d", config.ZeroMQ.MessageBufferSize)
 	}
-	
+
 	// Verify topics
 	if len(config.TopicMappings) != 2 {
 		t.Errorf("Expected 2 topic mappings, got %d", len(config.TopicMappings))
 	}
-	
+
 	// Verify throttle rates
 	if config.ThrottleRates.HighHz != 0 {
 		t.Errorf("Expected high_hz 0, got %d", config.ThrottleRates.HighHz)
@@ -211,15 +211,15 @@ throttle_rates:
 	if config.ZeroMQ.ControllerAddress != "tcp://*:5559" {
 		t.Errorf("Environment override failed. Expected controller_address tcp://*:5559, got %s", config.ZeroMQ.ControllerAddress)
 	}
-	
+
 	if config.Controller.Server.Port != 9090 {
 		t.Errorf("Environment override failed. Expected port 9090, got %d", config.Controller.Server.Port)
 	}
-	
+
 	if config.Controller.Processing.HighPriorityWorkers != 8 {
 		t.Errorf("Environment override failed. Expected high_priority_workers 8, got %d", config.Controller.Processing.HighPriorityWorkers)
 	}
-	
+
 	if config.ThrottleRates.LowHz != 5 {
 		t.Errorf("Environment override failed. Expected low_hz 5, got %d", config.ThrottleRates.LowHz)
 	}
@@ -306,7 +306,7 @@ throttle_rates:
 	if config.ConfigID != "unified-config" {
 		t.Errorf("Expected unified config to be loaded, got config_id %s", config.ConfigID)
 	}
-	
+
 	if config.Environment != "development" {
 		t.Errorf("Expected default environment development, got %s", config.Environment)
 	}
@@ -321,12 +321,12 @@ throttle_rates:
 	if config.Environment != "production" {
 		t.Errorf("Expected environment to be set to production, got %s", config.Environment)
 	}
-	
+
 	// Test with missing config file
 	if err := os.Remove(unifiedConfigPath); err != nil {
 		t.Fatalf("Failed to remove unified config: %v", err)
 	}
-	
+
 	_, err = LoadConfigWithEnv(tempDir, "development")
 	if err == nil {
 		t.Errorf("Expected error when config file is missing, got nil")
@@ -354,12 +354,6 @@ func TestTopicMappingHelpers(t *testing.T) {
 				SourceType:  "ROS2_CDM",
 			},
 			{
-				OttTopic:   "teleop.diagnostic.system_metrics",
-				Priority:   "LOW",
-				Direction:  "OUTBOUND",
-				SourceType: "OPEN_TELEOP",
-			},
-			{
 				// Missing direction, will use default
 				RosTopic:    "/robot_state",
 				OttTopic:    "teleop.robot.state",
@@ -379,7 +373,7 @@ func TestTopicMappingHelpers(t *testing.T) {
 	if len(inboundTopics) != 1 {
 		t.Errorf("Expected 1 inbound topic, got %d", len(inboundTopics))
 	}
-	
+
 	if inboundTopics[0].OttTopic != "teleop.control.velocity" {
 		t.Errorf("Expected teleop.control.velocity, got %s", inboundTopics[0].OttTopic)
 	}
@@ -394,11 +388,11 @@ func TestTopicMappingHelpers(t *testing.T) {
 	if !found {
 		t.Errorf("Expected to find teleop.control.velocity topic")
 	}
-	
+
 	if velocityTopic.Direction != "INBOUND" {
 		t.Errorf("Expected INBOUND direction, got %s", velocityTopic.Direction)
 	}
-	
+
 	if velocityTopic.RosTopic != "/cmd_vel" {
 		t.Errorf("Expected /cmd_vel ROS topic, got %s", velocityTopic.RosTopic)
 	}
@@ -408,11 +402,11 @@ func TestTopicMappingHelpers(t *testing.T) {
 	if !found {
 		t.Errorf("Expected to find teleop.robot.state topic")
 	}
-	
+
 	if robotStateTopic.Direction != "OUTBOUND" {
 		t.Errorf("Expected default OUTBOUND direction, got %s", robotStateTopic.Direction)
 	}
-	
+
 	if robotStateTopic.Priority != "STANDARD" {
 		t.Errorf("Expected default STANDARD priority, got %s", robotStateTopic.Priority)
 	}
@@ -422,4 +416,4 @@ func TestTopicMappingHelpers(t *testing.T) {
 	if found {
 		t.Errorf("Expected not to find teleop.nonexistent topic")
 	}
-} 
+}

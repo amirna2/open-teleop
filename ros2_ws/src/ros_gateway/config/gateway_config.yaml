@@ -42,12 +42,6 @@ gateway:
       priority: "HIGH"
       message_type: "trajectory_msgs/msg/JointTrajectory"
       direction: "INBOUND"  # From controller to ROS
-      
-    # Diagnostic data (LOW priority)
-    - ros_topic: "/diagnostics"
-      ott: "teleop.diagnostic.status"
-      priority: "LOW"
-      message_type: "diagnostic_msgs/msg/DiagnosticArray"
     
   # Default direction is OUTBOUND (from ROS to controller) if not specified
   defaults:

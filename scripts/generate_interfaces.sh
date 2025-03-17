@@ -35,8 +35,7 @@ if [ -f "$OTT_SCHEMA" ]; then
             pkg_name=$(basename "$pkg_dir")
             
             # Only generate for actual bridge packages
-            # Check if the package name contains "bridge" or "diagnostic"
-            if [[ "$pkg_name" == *bridge* || "$pkg_name" == *diagnostic* ]]; then
+            if [[ "$pkg_name" == *bridge* ]]; then
                 echo "Found bridge package: $pkg_name"
                 
                 # Find the Python module directory (same name as the package)

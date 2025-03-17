@@ -48,12 +48,6 @@ topic_mappings:
     message_type: "geometry_msgs/msg/Twist"
     direction: "INBOUND"
     source_type: "ROS2_CDM"
-    
-  # System metrics (custom Open-Teleop defined message)
-  - ott: "teleop.diagnostic.system_metrics"
-    priority: "LOW"
-    source_type: "OPEN_TELEOP"
-    direction: "OUTBOUND"
 
 # Default settings for topics
 defaults:
