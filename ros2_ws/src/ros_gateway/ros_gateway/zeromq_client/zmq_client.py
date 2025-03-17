@@ -53,7 +53,11 @@ class ZmqClient:
         
         # SUB socket for subscription pattern
         self.sub_socket = self.context.socket(zmq.SUB)
+        
+        # Connect to the controller's publisher port
         self.sub_socket.connect(self.publish_address)
+        if self.logger:
+            self.logger.info(f"ZmqClient: Connected sub socket to {self.publish_address}")
         
         if self.logger:
             self.logger.info(f"ZmqClient: Sockets initialized and connected")
@@ -160,23 +164,56 @@ class ZmqClient:
         poller = zmq.Poller()
         poller.register(self.sub_socket, zmq.POLLIN)
         
+        poll_count = 0
+        last_log_time = time.time()
+        
         while self.running:
             try:
+                poll_count += 1
+                current_time = time.time()
+                
+                # Log poll stats every 5 seconds
+                if current_time - last_log_time > 5:
+                    if self.logger:
+                        self.logger.debug(f"ZmqClient: Polling socket (count: {poll_count} in last 5s)")
+                    poll_count = 0
+                    last_log_time = current_time
+                
                 socks = dict(poller.poll(timeout=100))
                 
                 if self.sub_socket in socks and socks[self.sub_socket] == zmq.POLLIN:
+                    if self.logger:
+                        self.logger.debug("ZmqClient: POLLIN event detected, receiving message...")
+                    
                     # Receive the topic and message
                     topic = self.sub_socket.recv_string()
                     message = self.sub_socket.recv_string()
                     
                     if self.logger:
-                        self.logger.debug(f"ZmqClient: Received message on topic {topic}")
+                        self.logger.info(f"ZmqClient: Received message on topic {topic}")
+                        self.logger.info(f"ZmqClient: Message content: {message[:100]}...")
                     
                     # Find matching topic callbacks
+                    processed = False
                     for registered_topic, callbacks in self.callbacks.items():
                         if topic.startswith(registered_topic):
+                            processed = True
+                            if self.logger:
+                                self.logger.info(f"ZmqClient: Processing message for topic {topic} (matches {registered_topic})")
                             for callback in callbacks:
-                                callback(message)
+                                try:
+                                    callback(message)
+                                except Exception as e:
+                                    if self.logger:
+                                        self.logger.error(f"ZmqClient: Callback error for topic {topic}: {str(e)}")
+                                        import traceback
+                                        self.logger.error(traceback.format_exc())
+                                    
+                    if not processed and self.logger:
+                        self.logger.warning(f"ZmqClient: No callback registered for topic {topic}")
+                else:
+                    # No messages available this poll cycle
+                    pass
             except zmq.ZMQError as e:
                 if self.logger:
                     self.logger.error(f"ZmqClient: Error in receive loop: {e}")

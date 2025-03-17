@@ -64,7 +64,7 @@ class RosGateway(Node):
         
         # Get ZeroMQ configuration from environment variables with fallback defaults
         controller_address = os.environ.get('TELEOP_ZMQ_CONTROLLER_ADDRESS', 'tcp://localhost:5555')
-        publish_address = os.environ.get('TELEOP_ZMQ_PUBLISH_ADDRESS', 'tcp://*:5556')
+        publish_address = os.environ.get('TELEOP_ZMQ_PUBLISH_ADDRESS', 'tcp://localhost:5556')
         message_buffer_size = int(os.environ.get('TELEOP_ZMQ_BUFFER_SIZE', '1000'))
         reconnect_interval_ms = int(os.environ.get('TELEOP_ZMQ_RECONNECT_INTERVAL_MS', '1000'))
         
@@ -88,26 +88,36 @@ class RosGateway(Node):
         self.logger.info(f"Config ID: {self.config.get('config_id')}")
         self.logger.info(f"Robot ID: {self.config.get('robot_id')}")
         
-        # Configure logging
-        self._configure_logging()
-        
-        # Get topic mappings
+        # Log topic mappings
         topic_mappings = self.config.get('topic_mappings', [])
+        
+        # Log each topic mapping with its keys
+        for i, mapping in enumerate(topic_mappings):
+            self.logger.info(f"Topic mapping {i+1}: {json.dumps(mapping)}")
+            self.logger.info(f"  Keys: {list(mapping.keys())}")
+        
+        # Get defaults
         defaults = self.config.get('defaults', {})
+        self.logger.info(f"Default values: {json.dumps(defaults)}")
         
-        # Log topic mapping info
-        ros2_topics = self.filter_topic_mappings_by_source_type(topic_mappings, defaults, 'ROS2_CDM')
-        ot_topics = self.filter_topic_mappings_by_source_type(topic_mappings, defaults, 'OPEN_TELEOP')
-        self.logger.info(f"Found {len(ros2_topics)} ROS2 topics and {len(ot_topics)} Open-Teleop topics")
+        # Extract topic lists for logging
+        ros2_topics = [m.get('ros_topic') for m in topic_mappings]
+        ott_topics = [m.get('ott') for m in topic_mappings]
+        self.logger.info(f"Found {len(ros2_topics)} ROS2 topics and {len(ott_topics)} Open-Teleop topics")
         
+        # Filter topic mappings by direction
         inbound_topics = self.filter_topic_mappings_by_direction(topic_mappings, defaults, 'INBOUND')
         outbound_topics = self.filter_topic_mappings_by_direction(topic_mappings, defaults, 'OUTBOUND')
         self.logger.info(f"Found {len(inbound_topics)} inbound topics and {len(outbound_topics)} outbound topics")
         
-        # Initialize the topic manager (for ROS2 topics only)
+        # Log detailed information about inbound topics
+        for i, mapping in enumerate(inbound_topics):
+            self.logger.info(f"Inbound topic {i+1}: {mapping['ott']} -> {mapping['ros_topic']}")
+        
+        # Initialize the topic manager (for ROS2 topics only) - pass full outbound topic mappings, not just strings
         self.topic_manager = TopicManager(
             node=self, 
-            topic_mappings=ros2_topics,
+            topic_mappings=outbound_topics,
             defaults=defaults,
             message_converter=self.converter,
             zmq_client=self.zmq_client,
