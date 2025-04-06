@@ -339,7 +339,11 @@ func (d *MessageDispatcher) Dispatch(data []byte) ([]byte, error) {
 // handleRawFlatbuffer processes raw incoming data as an OttMessage FlatBuffer
 func (d *MessageDispatcher) handleRawFlatbuffer(data []byte) ([]byte, error) {
 	// +++ Add logging for received raw bytes +++
-	d.logger.Printf("DEBUG handleRawFlatbuffer: Received %d bytes. Data (hex): %x", len(data), data)
+	if len(data) > 32 {
+		d.logger.Printf("DEBUG handleRawFlatbuffer: Received %d bytes. Data (hex): %x...", len(data), data[:32])
+	} else {
+		d.logger.Printf("DEBUG handleRawFlatbuffer: Received %d bytes. Data (hex): %x", len(data), data)
+	}
 
 	// Parse the raw bytes as an OttMessage FlatBuffer
 	// Requires generated Go code for OttMessage (assuming package 'message')

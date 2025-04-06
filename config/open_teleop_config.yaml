@@ -41,6 +41,13 @@ topic_mappings:
     direction: "OUTBOUND"
     source_type: "ROS2_CDR"
   
+  - ros_topic: "/image"
+    ott: "teleop.sensor.image"
+    priority: "STANDARD"
+    message_type: "sensor_msgs/msg/Image"
+    direction: "OUTBOUND"
+    source_type: "ROS2_CDR"
+
   # Robot control (INBOUND - from controller to ROS)
   - ros_topic: "/cmd_vel"
     ott: "teleop.control.velocity"
