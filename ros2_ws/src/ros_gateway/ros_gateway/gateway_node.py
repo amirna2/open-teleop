@@ -47,7 +47,7 @@ class RosGateway(Node):
         self.logger = log.get_logger(
             name=f"{self.get_name()}",
             log_dir="/tmp/open_teleop_logs",
-            console_level=log.INFO,
+            console_level=log.DEBUG,
             file_level=log.DEBUG
         )
         

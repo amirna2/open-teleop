@@ -3,7 +3,6 @@
 
 import importlib
 import flatbuffers
-import base64
 from rclpy.serialization import serialize_message
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 
@@ -114,7 +113,7 @@ class TopicManager:
             qos = QoSProfile(
                 reliability=QoSReliabilityPolicy.RELIABLE,
                 history=QoSHistoryPolicy.KEEP_LAST,
-                depth=10
+                depth=1
             )
             
             self.logger.info(f"Creating subscriber for {ros_topic} -> {ott_topic} (priority: {priority})")

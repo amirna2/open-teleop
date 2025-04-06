@@ -113,7 +113,7 @@ class ZmqClient:
             reply = self.req_socket.recv_string()
             
             if self.logger:
-                self.logger.debug(f"ZmqClient: Received binary request reply: {reply[:100]}...")
+                self.logger.debug(f"ZmqClient: Received binary request reply: {reply[:50]}...")
                 
             return reply
         except zmq.ZMQError as e:
