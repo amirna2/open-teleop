@@ -7,6 +7,7 @@ set -e  # Exit on error
 SCHEMAS_DIR="$(dirname "$(dirname "$0")")/schemas"
 ROS2_OUTPUT_DIR="$(dirname "$(dirname "$0")")/ros2_ws/src/bridge_nodes"
 GO_OUTPUT_DIR="$(dirname "$(dirname "$0")")/controller/pkg/flatbuffers"
+ROS_GATEWAY_DIR="$(dirname "$(dirname "$0")")/ros2_ws/src/ros_gateway"
 
 # Check FlatBuffers compiler
 if ! command -v flatc &> /dev/null; then
@@ -26,6 +27,22 @@ if [ -f "$OTT_SCHEMA" ]; then
     # Generate Go code for controller
     echo "Generating Go code for OTT message..."
     flatc --go -o "$GO_OUTPUT_DIR" "$OTT_SCHEMA"
+    
+    # Generate Python code for ROS gateway
+    if [ -d "$ROS_GATEWAY_DIR" ]; then
+        echo "Generating Python code for ros_gateway..."
+        GATEWAY_MODULE_DIR="$ROS_GATEWAY_DIR/ros_gateway"
+        if [ -d "$GATEWAY_MODULE_DIR" ]; then
+            # Create flatbuffers directory
+            mkdir -p "$GATEWAY_MODULE_DIR/flatbuffers"
+            flatc --python -o "$GATEWAY_MODULE_DIR/flatbuffers" "$OTT_SCHEMA"
+            echo "Generated FlatBuffer code for ros_gateway"
+        else
+            echo "Warning: ros_gateway module directory not found at $GATEWAY_MODULE_DIR"
+        fi
+    else
+        echo "Warning: ros_gateway package directory not found, skipping"
+    fi
     
     # Generate Python code for bridge packages only
     echo "Generating Python code for bridge packages..."

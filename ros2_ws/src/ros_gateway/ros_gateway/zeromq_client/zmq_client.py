@@ -62,11 +62,12 @@ class ZmqClient:
         if self.logger:
             self.logger.info(f"ZmqClient: Sockets initialized and connected")
     
-    def send_message(self, message):
+    def send_message(self, topic, message):
         """
         Send a message to the controller.
         
         Args:
+            topic: The topic to send the message to
             message: The message to send (JSON string)
         
         Returns:
@@ -76,7 +77,7 @@ class ZmqClient:
             message = json.dumps(message)
             
         if self.logger:
-            self.logger.info(f"ZmqClient: Sending message: {message[:100]}...")
+            self.logger.info(f"ZmqClient: Sending message to {topic}: {message[:100]}...")
         
         try:
             self.req_socket.send_string(message)
@@ -89,6 +90,35 @@ class ZmqClient:
         except zmq.ZMQError as e:
             if self.logger:
                 self.logger.error(f"ZmqClient: Error sending message: {e}")
+            return None
+    
+    def send_request_binary(self, binary_data):
+        """
+        Send raw binary data using REQ socket and wait for a string reply.
+
+        Args:
+            binary_data: The raw bytes to send.
+
+        Returns:
+            Reply string from the controller or None if failed.
+        """
+        if self.logger:
+            self.logger.debug(f"ZmqClient: Sending binary request ({len(binary_data)} bytes)")
+        
+        try:
+            # Send the raw binary data
+            self.req_socket.send(binary_data)
+            
+            # Receive the string reply (expected to be JSON ACK)
+            reply = self.req_socket.recv_string()
+            
+            if self.logger:
+                self.logger.debug(f"ZmqClient: Received binary request reply: {reply[:100]}...")
+                
+            return reply
+        except zmq.ZMQError as e:
+            if self.logger:
+                self.logger.error(f"ZmqClient: Error sending/receiving binary request: {e}")
             return None
     
     def request_config(self):
@@ -107,7 +137,7 @@ class ZmqClient:
             self.logger.info("ZmqClient: Requesting configuration from controller")
         
         try:
-            response_str = self.send_message(config_request)
+            response_str = self.send_message("config", config_request)
             if response_str:
                 response = json.loads(response_str)
                 if response["type"] == "CONFIG_RESPONSE":

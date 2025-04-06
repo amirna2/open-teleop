@@ -190,6 +190,7 @@ class RosGateway(Node):
         
         if config is not None:
             self.logger.info("Successfully received configuration from controller")
+            self.logger.debug(f"DEBUG: Received config from controller: {json.dumps(config, indent=2)}")
             
             # Subscribe to configuration updates
             self.zmq_client.subscribe_to_config_updates(self.handle_config_update)

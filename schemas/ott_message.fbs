@@ -4,23 +4,20 @@
 namespace open_teleop.message;
 
 enum ContentType : byte {
-  ROS2_MESSAGE = 0,    // Standard ROS2 message (serialized in CDR)
+  ROS2_MESSAGE = 0,                               // Standard ROS2 message (serialized in CDR)
   // Other types can be added later as the platform evolves
 }
 
 table OttMessage {
-  // Schema version for future compatibility
-  version:          uint8 = 1;        // Schema version, starting with 1
+  version:          uint8 = 1;  // Schema version, starting with 1
   
   // Core message content
-  payload:          [ubyte];          // Raw message data (ROS2 CDR format for ROS messages)
-  content_type:     ContentType = ROS2_MESSAGE;  // Default to ROS2 message
+  payload:          [ubyte];    // Raw message data (ROS2 CDR format for ROS messages)
+  content_type:     ContentType = ROS2_MESSAGE;   // Default to ROS2 message
   
   // Single identifier from config
-  ott:              string;           // Open-Teleop-Topic name (e.g., "teleop.sensor.battery_state")
-  
-  // Timing information
-  timestamp_ns:     int64;            // When bridge received/processed the message (nanoseconds since epoch)
+  ott:              string;   // Open-Teleop-Topic name (e.g., "teleop.sensor.battery_state")  
+  timestamp_ns:     int64;    // When bridge received/processed the message (nanoseconds since epoch)
 }
 
 root_type OttMessage; 

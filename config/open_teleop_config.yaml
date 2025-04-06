@@ -34,7 +34,7 @@ zeromq:
 # Topic mappings configuration
 topic_mappings:
   # Sensor data (OUTBOUND - from ROS to controller)
-  - ros_topic: "/battery_state"
+  - ros_topic: "/batterystate"
     ott: "teleop.sensor.battery"
     priority: "STANDARD"
     message_type: "sensor_msgs/msg/BatteryState"

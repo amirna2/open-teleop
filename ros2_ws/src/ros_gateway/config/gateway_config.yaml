@@ -5,43 +5,6 @@ gateway:
     publish_address: "tcp://*:5556"
     message_buffer_size: 1000
     reconnect_interval_ms: 1000
-
-  # Topic mappings from ROS to Open-Teleop-Topic (OTT)
-  topic_mappings:
-    # Video related topics (HIGH priority)
-    - ros_topic: "/camera/image_raw"
-      ott: "teleop.video.main_camera"
-      priority: "HIGH"
-      message_type: "sensor_msgs/msg/Image"
-      
-    - ros_topic: "/camera/compressed"
-      ott: "teleop.video.main_camera_compressed"
-      priority: "HIGH"
-      message_type: "sensor_msgs/msg/CompressedImage"
-      
-    # Sensor data (STANDARD priority)
-    - ros_topic: "/imu/data"
-      ott: "teleop.sensor.imu"
-      priority: "STANDARD"
-      message_type: "sensor_msgs/msg/Imu"
-      
-    - ros_topic: "/battery_state"
-      ott: "teleop.sensor.battery"
-      priority: "STANDARD"
-      message_type: "sensor_msgs/msg/BatteryState"
-    
-    # Robot control topics (for publishing to ROS)
-    - ros_topic: "/cmd_vel"
-      ott: "teleop.control.velocity"
-      priority: "HIGH"
-      message_type: "geometry_msgs/msg/Twist"
-      direction: "INBOUND"  # From controller to ROS
-      
-    - ros_topic: "/arm_controller/command"
-      ott: "teleop.control.arm"
-      priority: "HIGH"
-      message_type: "trajectory_msgs/msg/JointTrajectory"
-      direction: "INBOUND"  # From controller to ROS
     
   # Default direction is OUTBOUND (from ROS to controller) if not specified
   defaults:
@@ -50,7 +13,7 @@ gateway:
     
   # Logger configuration
   logging:
-    level: "INFO"
+    level: "DEBUG"
     log_to_file: true
     log_path: "logs/ros_gateway"
     log_rotation_days: 7 

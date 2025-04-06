@@ -1,6 +1,7 @@
 package zeromq
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -55,3 +56,81 @@ func (h *ConfigHandler) HandleMessage(data []byte) ([]byte, error) {
 	h.logger.Printf("Sending configuration response (%d bytes)", len(responseData))
 	return responseData, nil
 }
+
+// +++ START NEW HANDLER +++
+// FlatbufferTopicData defines the expected structure within the Data field for flatbuffer messages
+type FlatbufferTopicData struct {
+	OttTopic   string `json:"ott_topic"`
+	Base64Data string `json:"base64_data"`
+}
+
+// FlatbufferMessageHandler handles FLATBUFFER_TOPIC_MESSAGE messages
+type FlatbufferMessageHandler struct {
+	logger *log.Logger
+	// Add any dependencies needed to process the flatbuffer, e.g., a router or processor
+}
+
+// NewFlatbufferMessageHandler creates a new handler for flatbuffer messages
+func NewFlatbufferMessageHandler(logger *log.Logger) *FlatbufferMessageHandler {
+	return &FlatbufferMessageHandler{
+		logger: logger,
+	}
+}
+
+// HandleMessage processes a FLATBUFFER_TOPIC_MESSAGE
+func (h *FlatbufferMessageHandler) HandleMessage(data []byte) ([]byte, error) {
+	var msg ZeroMQMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return nil, fmt.Errorf("failed to parse flatbuffer wrapper message: %w", err)
+	}
+
+	if msg.Type != "FLATBUFFER_TOPIC_MESSAGE" {
+		return nil, fmt.Errorf("unexpected message type for FlatbufferMessageHandler: %s", msg.Type)
+	}
+
+	// Use type assertion to get the data field as map[string]interface{}
+	dataMap, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid data structure for flatbuffer message")
+	}
+
+	// Extract fields (handle potential type issues)
+	ottTopic, topicOk := dataMap["ott_topic"].(string)
+	base64Data, dataOk := dataMap["base64_data"].(string)
+	if !topicOk || !dataOk {
+		return nil, fmt.Errorf("missing or invalid ott_topic or base64_data in flatbuffer message data")
+	}
+
+	h.logger.Printf("Processing Flatbuffer message for topic: %s (%d base64 chars)", ottTopic, len(base64Data))
+
+	// Decode base64 data
+	flatbufferBytes, err := base64.StdEncoding.DecodeString(base64Data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode base64 data for topic %s: %w", ottTopic, err)
+	}
+
+	// TODO: Add actual processing logic for the flatbufferBytes based on ottTopic
+	h.logger.Printf("Successfully decoded Flatbuffer for topic %s (%d bytes) - PROCESSING NOT IMPLEMENTED", ottTopic, len(flatbufferBytes))
+
+	// Send back a simple ACK response
+	ackResponse := ZeroMQMessage{
+		Type:      "ACK",
+		Timestamp: float64(time.Now().Unix()),
+		Data: map[string]interface{}{ // Use map for generic ACK data
+			"status":  "OK",
+			"topic":   ottTopic,
+			"message": "Flatbuffer received",
+		},
+	}
+
+	responseData, err := json.Marshal(ackResponse)
+	if err != nil {
+		// Log error but still attempt to inform client something went wrong with ack
+		h.logger.Printf("Error serializing ACK response for %s: %v", ottTopic, err)
+		return nil, fmt.Errorf("failed to serialize ACK response: %w", err) // Propagate error
+	}
+
+	return responseData, nil
+}
+
+// +++ END NEW HANDLER +++

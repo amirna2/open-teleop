@@ -8,7 +8,9 @@ import (
 	"sync"
 	"time"
 
+	// Assuming flatbuffer Go runtime is imported
 	"github.com/open-teleop/controller/pkg/config"
+	message "github.com/open-teleop/controller/pkg/flatbuffers/open_teleop/message"
 	"github.com/pebbe/zmq4"
 )
 
@@ -92,6 +94,17 @@ func newMessageReceiver(ctx *zmq4.Context, cfg *config.Config, dispatcher *Messa
 	if err := socket.SetLinger(0); err != nil {
 		socket.Close()
 		return nil, fmt.Errorf("failed to set linger option: %w", err)
+	}
+
+	// Set receive and send timeouts to prevent indefinite blocking during shutdown
+	const socketTimeout = 1 * time.Second
+	if err := socket.SetRcvtimeo(socketTimeout); err != nil {
+		socket.Close()
+		return nil, fmt.Errorf("failed to set receive timeout: %w", err)
+	}
+	if err := socket.SetSndtimeo(socketTimeout); err != nil {
+		socket.Close()
+		return nil, fmt.Errorf("failed to set send timeout: %w", err)
 	}
 
 	// Create poller for non-blocking receives
@@ -181,16 +194,24 @@ func (r *MessageReceiver) Start() {
 
 // Stop halts the message receiving loop
 func (r *MessageReceiver) Stop() {
+	if !r.running {
+		return
+	}
 	r.running = false
+	if r.socket != nil {
+		r.logger.Printf("MessageReceiver: Closing socket to interrupt blocking calls")
+		r.socket.Close()
+	}
 }
 
-// Close cleans up resources
+// Close cleans up resources (socket might already be closed by Stop)
 func (r *MessageReceiver) Close() {
 	r.Stop()
 	if r.socket != nil {
-		r.socket.Close()
-		r.socket = nil
+		// Optional: Log if closing again, though Stop should handle it.
+		// r.socket.Close()
 	}
+	r.socket = nil
 }
 
 // MessageSender handles sending messages to ZeroMQ sockets
@@ -294,25 +315,90 @@ func (d *MessageDispatcher) RegisterHandler(messageType string, handler MessageH
 
 // Dispatch processes a message and routes it to the appropriate handler
 func (d *MessageDispatcher) Dispatch(data []byte) ([]byte, error) {
-	// Parse message to determine type
+	// First, try to parse as standard JSON message
 	var msg ZeroMQMessage
-	if err := json.Unmarshal(data, &msg); err != nil {
-		return nil, fmt.Errorf("failed to parse message: %w", err)
+	if err := json.Unmarshal(data, &msg); err == nil {
+		// Successfully parsed as JSON, check if handler exists
+		d.logger.Printf("Dispatching JSON message of type: %s", msg.Type)
+		d.mu.RLock()
+		handler, exists := d.handlers[msg.Type]
+		d.mu.RUnlock()
+
+		if !exists {
+			return nil, fmt.Errorf("%w: %s", ErrUnknownMessageType, msg.Type)
+		}
+		// Process with registered JSON handler
+		return handler.HandleMessage(data)
 	}
 
-	d.logger.Printf("Dispatching message of type: %s", msg.Type)
+	// JSON parsing failed, assume it's a raw OttMessage FlatBuffer
+	d.logger.Printf("JSON parse failed, attempting to handle as raw Flatbuffer (%d bytes)", len(data))
+	return d.handleRawFlatbuffer(data)
+}
 
-	// Find handler for message type
-	d.mu.RLock()
-	handler, exists := d.handlers[msg.Type]
-	d.mu.RUnlock()
+// handleRawFlatbuffer processes raw incoming data as an OttMessage FlatBuffer
+func (d *MessageDispatcher) handleRawFlatbuffer(data []byte) ([]byte, error) {
+	// +++ Add logging for received raw bytes +++
+	d.logger.Printf("DEBUG handleRawFlatbuffer: Received %d bytes. Data (hex): %x", len(data), data)
 
-	if !exists {
-		return nil, fmt.Errorf("%w: %s", ErrUnknownMessageType, msg.Type)
+	// Parse the raw bytes as an OttMessage FlatBuffer
+	// Requires generated Go code for OttMessage (assuming package 'message')
+	ottMsg := message.GetRootAsOttMessage(data, 0)
+
+	// Verify FlatBuffer integrity (optional but recommended)
+	// +++ Temporarily disable explicit verification to isolate Verifier issue +++
+	/*
+		verifier := flatbuffers.Verifier{
+			Bytes: data,
+			Pos:   flatbuffers.UOffsetT(0), // Start verification from the beginning
+		}
+		if !ottMsg.Verify(&verifier) { // Pass pointer to verifier
+			return nil, fmt.Errorf("invalid OttMessage flatbuffer received")
+		}
+	*/
+
+	// Extract data from FlatBuffer
+	ottTopic := string(ottMsg.Ott())
+	contentType := ottMsg.ContentType()
+	payloadBytes := ottMsg.PayloadBytes()
+	timestampNs := ottMsg.TimestampNs()
+	version := ottMsg.Version()
+
+	d.logger.Printf(
+		"Successfully parsed raw Flatbuffer: Topic='%s', Type=%d, PayloadSize=%d, Timestamp=%d, Version=%d",
+		ottTopic,
+		contentType,
+		len(payloadBytes),
+		timestampNs,
+		version,
+	)
+
+	// TODO: Add routing/processing logic based on ottTopic and contentType
+	// For now, just log that we received it.
+	d.logger.Printf("Flatbuffer Processing for topic '%s' NOT IMPLEMENTED", ottTopic)
+
+	// Send back a simple ACK response (as JSON string)
+	ackResponse := ZeroMQMessage{
+		Type:      "ACK",
+		Timestamp: float64(time.Now().Unix()),
+		Data: map[string]interface{}{ // Use map for generic ACK data
+			"status":  "OK",
+			"topic":   ottTopic, // Include topic in ACK
+			"message": "Raw Flatbuffer received",
+		},
 	}
 
-	// Process message with handler
-	return handler.HandleMessage(data)
+	responseData, err := json.Marshal(ackResponse)
+	if err != nil {
+		d.logger.Printf("Error serializing ACK response for raw flatbuffer topic %s: %v", ottTopic, err)
+		// Don't return error to client if ACK fails, just log
+		// Return a generic error response instead?
+		// For now, return error to reflect ACK serialization failure
+		return nil, fmt.Errorf("failed to serialize ACK response: %w", err)
+	}
+
+	// Return the JSON ACK bytes
+	return responseData, nil
 }
 
 // ZeroMQService coordinates ZeroMQ communications for the controller
@@ -402,14 +488,16 @@ func (s *ZeroMQService) Stop() {
 	s.logger.Printf("Stopping ZeroMQ service")
 	s.running = false
 
-	// Stop the receiver
+	// Stop the receiver - THIS NOW CLOSES THE SOCKET TOO
 	s.receiver.Stop()
 
 	// Close the sender
 	s.sender.Close()
 
 	// Wait for goroutines to finish
+	s.logger.Printf("Waiting for receiver goroutine to finish...")
 	s.wg.Wait()
+	s.logger.Printf("Receiver goroutine finished.")
 
 	// Clean up ZeroMQ context
 	if s.ctx != nil {

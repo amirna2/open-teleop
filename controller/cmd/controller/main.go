@@ -165,7 +165,6 @@ func main() {
 
 	// Stop the ZeroMQ server
 	zmqService.Stop()
-	log.Println("ZeroMQ service stopped")
 
 	// Shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
