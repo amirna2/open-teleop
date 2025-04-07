@@ -428,7 +428,7 @@ type ZeroMQService struct {
 	dispatcher *MessageDispatcher
 	logger     customlog.Logger
 	running    bool
-	wg         sync.WaitGroup
+	wg         *sync.WaitGroup
 }
 
 // NewZeroMQService creates a new ZeroMQ service
@@ -468,7 +468,7 @@ func NewZeroMQService(cfg *config.Config, logger customlog.Logger) (*ZeroMQServi
 		dispatcher: dispatcher,
 		logger:     logger,
 		running:    false,
-		wg:         wg,
+		wg:         &wg,
 	}, nil
 }
 

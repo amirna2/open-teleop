@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/sirupsen/logrus"
 )
@@ -117,10 +116,23 @@ func (f *SimpleFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 	b.WriteString(entry.Time.Format(timestampFormat))
 	b.WriteString(" ")
 
-	// Level (e.g., [INF], [WRN])
-	level := strings.ToUpper(entry.Level.String())
-	if len(level) > 3 {
-		level = level[:3] // Truncate (e.g., WARNING -> WAR)
+	// Level (e.g., [INF], [DBG]) - Custom mapping
+	var level string
+	switch entry.Level {
+	case logrus.DebugLevel, logrus.TraceLevel:
+		level = "DBG"
+	case logrus.InfoLevel:
+		level = "INF"
+	case logrus.WarnLevel:
+		level = "WRN"
+	case logrus.ErrorLevel:
+		level = "ERR"
+	case logrus.FatalLevel:
+		level = "FTL"
+	case logrus.PanicLevel:
+		level = "PNC" // Or FTL? Decided on PNC for Panic
+	default:
+		level = "???"
 	}
 	fmt.Fprintf(b, "[%s] ", level)
 
