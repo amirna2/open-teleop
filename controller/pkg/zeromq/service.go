@@ -12,6 +12,7 @@ import (
 	"github.com/open-teleop/controller/pkg/config"
 	message "github.com/open-teleop/controller/pkg/flatbuffers/open_teleop/message"
 	customlog "github.com/open-teleop/controller/pkg/log"
+	"github.com/open-teleop/controller/pkg/processing"
 	"github.com/pebbe/zmq4"
 )
 
@@ -308,6 +309,7 @@ type MessageDispatcher struct {
 	logger          customlog.Logger
 	mu              sync.RWMutex
 	topicProcessors map[string]func(*message.OttMessage, []byte) ([]byte, error)
+	messageDirector *processing.MessageDirector
 }
 
 // NewMessageDispatcher creates a new message dispatcher
@@ -374,20 +376,7 @@ func (d *MessageDispatcher) handleRawFlatbuffer(data []byte) ([]byte, error) {
 	}
 
 	// Parse the raw bytes as an OttMessage FlatBuffer
-	// Requires generated Go code for OttMessage (assuming package 'message')
 	ottMsg := message.GetRootAsOttMessage(data, 0)
-
-	// Verify FlatBuffer integrity (optional but recommended)
-	// +++ Temporarily disable explicit verification to isolate Verifier issue +++
-	/*
-		verifier := flatbuffers.Verifier{
-			Bytes: data,
-			Pos:   flatbuffers.UOffsetT(0), // Start verification from the beginning
-		}
-		if !ottMsg.Verify(&verifier) { // Pass pointer to verifier
-			return nil, fmt.Errorf("invalid OttMessage flatbuffer received")
-		}
-	*/
 
 	// Extract data from FlatBuffer
 	ottTopic := string(ottMsg.Ott())
@@ -405,7 +394,56 @@ func (d *MessageDispatcher) handleRawFlatbuffer(data []byte) ([]byte, error) {
 		version,
 	)
 
-	// Check if we have a processor for this topic
+	d.mu.RLock()
+	director := d.messageDirector
+	d.mu.RUnlock()
+
+	// If we have a message director, use it
+	if director != nil {
+		// Route message through MessageDirector
+		d.logger.Debugf("Routing message for topic '%s' through MessageDirector", ottTopic)
+		if err := (*director).RouteMessage(ottMsg); err != nil {
+			d.logger.Errorf("Error routing message through MessageDirector: %v", err)
+
+			// Create error response
+			errResponse := ZeroMQMessage{
+				Type:      "ERROR",
+				Timestamp: float64(time.Now().Unix()),
+				Data: map[string]interface{}{
+					"status":  "ERROR",
+					"topic":   ottTopic,
+					"message": fmt.Sprintf("Failed to route message: %v", err),
+				},
+			}
+
+			responseData, jsonErr := json.Marshal(errResponse)
+			if jsonErr != nil {
+				return nil, fmt.Errorf("failed to create error response: %w", jsonErr)
+			}
+
+			return responseData, nil // Return error response but don't propagate error
+		}
+
+		// Send back success ACK response
+		ackResponse := ZeroMQMessage{
+			Type:      "ACK",
+			Timestamp: float64(time.Now().Unix()),
+			Data: map[string]interface{}{
+				"status":  "OK",
+				"topic":   ottTopic,
+				"message": "Message routed for processing",
+			},
+		}
+
+		responseData, jsonErr := json.Marshal(ackResponse)
+		if jsonErr != nil {
+			return nil, fmt.Errorf("failed to create ACK response: %w", jsonErr)
+		}
+
+		return responseData, nil
+	}
+
+	// Fall back to existing topic processor logic if MessageDirector not available
 	d.mu.RLock()
 	processor, exists := d.topicProcessors[ottTopic]
 	d.mu.RUnlock()
@@ -444,6 +482,13 @@ func (d *MessageDispatcher) handleRawFlatbuffer(data []byte) ([]byte, error) {
 
 	// Return the response data
 	return responseData, nil
+}
+
+// SetMessageDirector sets the MessageDirector for the dispatcher
+func (d *MessageDispatcher) SetMessageDirector(director *processing.MessageDirector) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.messageDirector = director
 }
 
 // ZeroMQService coordinates ZeroMQ communications for the controller
@@ -584,4 +629,11 @@ func (s *ZeroMQService) PublishJSON(topic string, messageType string, data inter
 	}
 
 	return s.PublishMessage(topic, msgData)
+}
+
+// SetMessageDirector sets the message director for processing incoming messages
+func (s *ZeroMQService) SetMessageDirector(director *processing.MessageDirector) {
+	if s.dispatcher != nil {
+		s.dispatcher.SetMessageDirector(director)
+	}
 }

@@ -20,6 +20,10 @@ import (
 	"github.com/open-teleop/controller/pkg/config"
 	// Import our new logger package
 	customlog "github.com/open-teleop/controller/pkg/log"
+	// Import our processing components
+	"github.com/open-teleop/controller/pkg/processing"
+	// Import our ROS parser
+	"github.com/open-teleop/controller/pkg/rosparser"
 	// Import our ZeroMQ server
 	"github.com/open-teleop/controller/pkg/zeromq"
 )
@@ -108,6 +112,44 @@ func main() {
 		logger.Fatalf("Failed to initialize ZeroMQ service: %v", err) // Use new logger
 	}
 
+	// Initialize Topic Registry
+	logger.Infof("Initializing Topic Registry")
+	topicRegistry := processing.NewTopicRegistry(logger)
+	topicRegistry.LoadFromConfig(cfg)
+
+	// Initialize ROS Parser
+	logger.Infof("Initializing ROS Parser")
+	if err := rosparser.Initialize(); err != nil {
+		logger.Fatalf("Failed to initialize ROS parser: %v", err)
+	}
+	defer rosparser.Shutdown()
+
+	// Create ROS Message Processor
+	logger.Infof("Creating ROS Message Processor")
+	rosProcessor := processing.NewRosMessageProcessor(logger, topicRegistry)
+
+	// Create Result Handler
+	logger.Infof("Creating Result Handler")
+	resultHandler := processing.NewLoggingResultHandler(logger)
+
+	// Initialize and configure Message Director
+	logger.Infof("Initializing Message Director")
+	directorOptions := &processing.DirectorOptions{
+		DefaultQueueSize: 1000, // Set a reasonable queue size
+	}
+	messageDirector := processing.NewMessageDirector(cfg, logger, topicRegistry, directorOptions)
+	messageDirector.Initialize(cfg)
+
+	// Set processor and result handler
+	messageDirector.SetProcessor(rosProcessor.CreateProcessorFunc())
+	messageDirector.SetResultHandler(resultHandler.CreateHandlerFunc())
+
+	// Connect Message Director to ZeroMQ service
+	zmqService.SetMessageDirector(messageDirector)
+
+	// Start the Message Director
+	messageDirector.Start()
+
 	// Register configuration handlers and publisher
 	// *** Pass the custom logger instance now ***
 	configPublisher := zeromq.RegisterConfigHandlers(zmqService, cfg, logger)
@@ -183,7 +225,10 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	logger.Infof("Shutting down server...") // Corrected from Info to Infof
+	logger.Infof("Shutting down server...")
+
+	// Stop the Message Director
+	messageDirector.Stop()
 
 	// Stop the ZeroMQ server
 	zmqService.Stop()
