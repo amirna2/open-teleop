@@ -304,17 +304,19 @@ func (s *MessageSender) Close() {
 
 // MessageDispatcher routes messages to the appropriate handlers
 type MessageDispatcher struct {
-	handlers map[string]MessageHandler
-	logger   customlog.Logger
-	mu       sync.RWMutex
+	handlers        map[string]MessageHandler
+	logger          customlog.Logger
+	mu              sync.RWMutex
+	topicProcessors map[string]func(*message.OttMessage, []byte) ([]byte, error)
 }
 
 // NewMessageDispatcher creates a new message dispatcher
 func NewMessageDispatcher(logger customlog.Logger) *MessageDispatcher {
 	return &MessageDispatcher{
-		handlers: make(map[string]MessageHandler),
-		logger:   logger,
-		mu:       sync.RWMutex{},
+		handlers:        make(map[string]MessageHandler),
+		logger:          logger,
+		mu:              sync.RWMutex{},
+		topicProcessors: make(map[string]func(*message.OttMessage, []byte) ([]byte, error)),
 	}
 }
 
@@ -325,6 +327,18 @@ func (d *MessageDispatcher) RegisterHandler(messageType string, handler MessageH
 
 	d.handlers[messageType] = handler
 	d.logger.Infof("Registered handler for message type: %s", messageType)
+}
+
+// RegisterTopicProcessor registers a processor for a specific topic
+func (d *MessageDispatcher) RegisterTopicProcessor(
+	topic string,
+	processor func(*message.OttMessage, []byte) ([]byte, error)) {
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.topicProcessors[topic] = processor
+	d.logger.Infof("Registered processor for topic: %s", topic)
 }
 
 // Dispatch processes a message and routes it to the appropriate handler
@@ -391,31 +405,44 @@ func (d *MessageDispatcher) handleRawFlatbuffer(data []byte) ([]byte, error) {
 		version,
 	)
 
-	// TODO: Add routing/processing logic based on ottTopic and contentType
-	// For now, just log that we received it.
-	d.logger.Warnf("Flatbuffer Processing for topic '%s' NOT IMPLEMENTED", ottTopic)
+	// Check if we have a processor for this topic
+	d.mu.RLock()
+	processor, exists := d.topicProcessors[ottTopic]
+	d.mu.RUnlock()
 
-	// Send back a simple ACK response (as JSON string)
-	ackResponse := ZeroMQMessage{
-		Type:      "ACK",
-		Timestamp: float64(time.Now().Unix()),
-		Data: map[string]interface{}{ // Use map for generic ACK data
-			"status":  "OK",
-			"topic":   ottTopic, // Include topic in ACK
-			"message": "Raw Flatbuffer received",
-		},
+	var responseData []byte
+	var err error
+
+	if exists {
+		// Process the message using the registered processor
+		d.logger.Debugf("Processing Flatbuffer for topic '%s' using registered processor", ottTopic)
+		responseData, err = processor(ottMsg, payloadBytes)
+		if err != nil {
+			d.logger.Errorf("Error processing topic '%s': %v", ottTopic, err)
+		}
+	} else {
+		// No processor registered for this topic
+		d.logger.Warnf("Flatbuffer Processing for topic '%s' NOT IMPLEMENTED", ottTopic)
+
+		// Send back a simple ACK response (as JSON string)
+		ackResponse := ZeroMQMessage{
+			Type:      "ACK",
+			Timestamp: float64(time.Now().Unix()),
+			Data: map[string]interface{}{ // Use map for generic ACK data
+				"status":  "OK",
+				"topic":   ottTopic, // Include topic in ACK
+				"message": "Raw Flatbuffer received, but no processor registered",
+			},
+		}
+
+		responseData, err = json.Marshal(ackResponse)
+		if err != nil {
+			d.logger.Errorf("Error serializing ACK response for raw flatbuffer topic %s: %v", ottTopic, err)
+			return nil, fmt.Errorf("failed to serialize ACK response: %w", err)
+		}
 	}
 
-	responseData, err := json.Marshal(ackResponse)
-	if err != nil {
-		d.logger.Errorf("Error serializing ACK response for raw flatbuffer topic %s: %v", ottTopic, err)
-		// Don't return error to client if ACK fails, just log
-		// Return a generic error response instead?
-		// For now, return error to reflect ACK serialization failure
-		return nil, fmt.Errorf("failed to serialize ACK response: %w", err)
-	}
-
-	// Return the JSON ACK bytes
+	// Return the response data
 	return responseData, nil
 }
 
@@ -480,6 +507,14 @@ func (s *ZeroMQService) RegisterHandler(messageType string, handler MessageHandl
 // RegisterHandlerFunc adds a handler function for a specific message type
 func (s *ZeroMQService) RegisterHandlerFunc(messageType string, handler func([]byte) ([]byte, error)) {
 	s.dispatcher.RegisterHandler(messageType, HandlerFunc(handler))
+}
+
+// RegisterTopicProcessor adds a processor for a specific topic
+func (s *ZeroMQService) RegisterTopicProcessor(
+	topic string,
+	processor func(*message.OttMessage, []byte) ([]byte, error)) {
+
+	s.dispatcher.RegisterTopicProcessor(topic, processor)
 }
 
 // Start begins the ZeroMQ service
