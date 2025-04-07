@@ -1,20 +1,21 @@
 package zeromq
 
 import (
-	"log"
+	// "log" // No longer use standard log
 
 	"github.com/open-teleop/controller/pkg/config"
+	customlog "github.com/open-teleop/controller/pkg/log"
 )
 
 // ConfigPublisher publishes configuration updates to gateways
 type ConfigPublisher struct {
 	service *ZeroMQService
 	config  *config.Config
-	logger  *log.Logger
+	logger  customlog.Logger // Use custom logger interface
 }
 
 // NewConfigPublisher creates a new publisher for configuration updates
-func NewConfigPublisher(service *ZeroMQService, cfg *config.Config, logger *log.Logger) *ConfigPublisher {
+func NewConfigPublisher(service *ZeroMQService, cfg *config.Config, logger customlog.Logger) *ConfigPublisher { // Use custom logger interface
 	return &ConfigPublisher{
 		service: service,
 		config:  cfg,
@@ -24,7 +25,7 @@ func NewConfigPublisher(service *ZeroMQService, cfg *config.Config, logger *log.
 
 // PublishConfigUpdate publishes the current configuration to all subscribed gateways
 func (p *ConfigPublisher) PublishConfigUpdate() error {
-	p.logger.Printf("Publishing configuration update (ID: %s)", p.config.ConfigID)
+	p.logger.Infof("Publishing configuration update (ID: %s)", p.config.ConfigID) // Changed to Infof
 
 	// Publish to the configuration topic
 	return p.service.PublishJSON("configuration.update", MsgTypeConfigResponse, p.config)
@@ -32,7 +33,7 @@ func (p *ConfigPublisher) PublishConfigUpdate() error {
 
 // PublishConfigUpdatedNotification publishes a notification that the config has been updated
 func (p *ConfigPublisher) PublishConfigUpdatedNotification() error {
-	p.logger.Printf("Publishing configuration update notification")
+	p.logger.Infof("Publishing configuration update notification") // Changed to Infof
 
 	// Create a notification message with minimal info
 	notification := map[string]interface{}{
@@ -46,7 +47,7 @@ func (p *ConfigPublisher) PublishConfigUpdatedNotification() error {
 }
 
 // RegisterConfigHandlers registers config-related handlers and services
-func RegisterConfigHandlers(service *ZeroMQService, cfg *config.Config, logger *log.Logger) *ConfigPublisher {
+func RegisterConfigHandlers(service *ZeroMQService, cfg *config.Config, logger customlog.Logger) *ConfigPublisher { // Use custom logger interface
 	// Create and register the configuration request handler
 	configHandler := NewConfigHandler(cfg, logger)
 	service.RegisterHandler(MsgTypeConfigRequest, configHandler)
@@ -54,6 +55,6 @@ func RegisterConfigHandlers(service *ZeroMQService, cfg *config.Config, logger *
 	// Create the config publisher
 	publisher := NewConfigPublisher(service, cfg, logger)
 
-	logger.Printf("Registered configuration handlers and publisher")
+	logger.Infof("Registered configuration handlers and publisher") // Changed to Infof
 	return publisher
 }

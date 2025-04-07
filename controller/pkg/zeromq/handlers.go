@@ -4,20 +4,20 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/open-teleop/controller/pkg/config"
+	customlog "github.com/open-teleop/controller/pkg/log"
 )
 
 // ConfigHandler handles CONFIG_REQUEST messages
 type ConfigHandler struct {
 	config *config.Config
-	logger *log.Logger
+	logger customlog.Logger
 }
 
 // NewConfigHandler creates a new handler for configuration requests
-func NewConfigHandler(cfg *config.Config, logger *log.Logger) *ConfigHandler {
+func NewConfigHandler(cfg *config.Config, logger customlog.Logger) *ConfigHandler {
 	return &ConfigHandler{
 		config: cfg,
 		logger: logger,
@@ -37,7 +37,7 @@ func (h *ConfigHandler) HandleMessage(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("unexpected message type: %s", msg.Type)
 	}
 
-	h.logger.Printf("Processing configuration request")
+	h.logger.Infof("Processing configuration request")
 
 	// Create response with the current configuration
 	response := ZeroMQMessage{
@@ -49,11 +49,11 @@ func (h *ConfigHandler) HandleMessage(data []byte) ([]byte, error) {
 	// Serialize the response
 	responseData, err := json.Marshal(response)
 	if err != nil {
-		h.logger.Printf("Error serializing response: %v", err)
+		h.logger.Errorf("Error serializing response: %v", err)
 		return nil, fmt.Errorf("failed to serialize response: %w", err)
 	}
 
-	h.logger.Printf("Sending configuration response (%d bytes)", len(responseData))
+	h.logger.Debugf("Sending configuration response (%d bytes)", len(responseData))
 	return responseData, nil
 }
 
@@ -66,12 +66,12 @@ type FlatbufferTopicData struct {
 
 // FlatbufferMessageHandler handles FLATBUFFER_TOPIC_MESSAGE messages
 type FlatbufferMessageHandler struct {
-	logger *log.Logger
+	logger customlog.Logger
 	// Add any dependencies needed to process the flatbuffer, e.g., a router or processor
 }
 
 // NewFlatbufferMessageHandler creates a new handler for flatbuffer messages
-func NewFlatbufferMessageHandler(logger *log.Logger) *FlatbufferMessageHandler {
+func NewFlatbufferMessageHandler(logger customlog.Logger) *FlatbufferMessageHandler {
 	return &FlatbufferMessageHandler{
 		logger: logger,
 	}
@@ -101,7 +101,7 @@ func (h *FlatbufferMessageHandler) HandleMessage(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("missing or invalid ott_topic or base64_data in flatbuffer message data")
 	}
 
-	h.logger.Printf("Processing Flatbuffer message for topic: %s (%d base64 chars)", ottTopic, len(base64Data))
+	h.logger.Debugf("Processing Flatbuffer message for topic: %s (%d base64 chars)", ottTopic, len(base64Data))
 
 	// Decode base64 data
 	flatbufferBytes, err := base64.StdEncoding.DecodeString(base64Data)
@@ -110,7 +110,7 @@ func (h *FlatbufferMessageHandler) HandleMessage(data []byte) ([]byte, error) {
 	}
 
 	// TODO: Add actual processing logic for the flatbufferBytes based on ottTopic
-	h.logger.Printf("Successfully decoded Flatbuffer for topic %s (%d bytes) - PROCESSING NOT IMPLEMENTED", ottTopic, len(flatbufferBytes))
+	h.logger.Warnf("Successfully decoded Flatbuffer for topic %s (%d bytes) - PROCESSING NOT IMPLEMENTED", ottTopic, len(flatbufferBytes))
 
 	// Send back a simple ACK response
 	ackResponse := ZeroMQMessage{
@@ -126,7 +126,7 @@ func (h *FlatbufferMessageHandler) HandleMessage(data []byte) ([]byte, error) {
 	responseData, err := json.Marshal(ackResponse)
 	if err != nil {
 		// Log error but still attempt to inform client something went wrong with ack
-		h.logger.Printf("Error serializing ACK response for %s: %v", ottTopic, err)
+		h.logger.Errorf("Error serializing ACK response for %s: %v", ottTopic, err)
 		return nil, fmt.Errorf("failed to serialize ACK response: %w", err) // Propagate error
 	}
 

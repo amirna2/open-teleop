@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"sync"
+	"syscall"
 	"time"
 
 	// Assuming flatbuffer Go runtime is imported
 	"github.com/open-teleop/controller/pkg/config"
 	message "github.com/open-teleop/controller/pkg/flatbuffers/open_teleop/message"
+	customlog "github.com/open-teleop/controller/pkg/log"
 	"github.com/pebbe/zmq4"
 )
 
@@ -71,13 +72,13 @@ type MessageReceiver struct {
 	socket     *zmq4.Socket
 	dispatcher *MessageDispatcher
 	poller     *zmq4.Poller
-	logger     *log.Logger
+	logger     customlog.Logger
 	running    bool
 	wg         *sync.WaitGroup
 }
 
 // newMessageReceiver creates a new MessageReceiver
-func newMessageReceiver(ctx *zmq4.Context, cfg *config.Config, dispatcher *MessageDispatcher, logger *log.Logger, wg *sync.WaitGroup) (*MessageReceiver, error) {
+func newMessageReceiver(ctx *zmq4.Context, cfg *config.Config, dispatcher *MessageDispatcher, logger customlog.Logger, wg *sync.WaitGroup) (*MessageReceiver, error) {
 	// Create REP socket for receiving requests
 	socket, err := ctx.NewSocket(zmq4.Type(zmq4.REP))
 	if err != nil {
@@ -111,7 +112,7 @@ func newMessageReceiver(ctx *zmq4.Context, cfg *config.Config, dispatcher *Messa
 	poller := zmq4.NewPoller()
 	poller.Add(socket, zmq4.State(zmq4.POLLIN))
 
-	logger.Printf("MessageReceiver initialized on %s", cfg.ZeroMQ.ControllerAddress)
+	logger.Infof("MessageReceiver initialized on %s", cfg.ZeroMQ.ControllerAddress)
 
 	return &MessageReceiver{
 		socket:     socket,
@@ -134,14 +135,14 @@ func (r *MessageReceiver) Start() {
 
 	go func() {
 		defer r.wg.Done()
-		r.logger.Printf("MessageReceiver started")
+		r.logger.Infof("MessageReceiver started")
 
 		for r.running {
 			// Poll for messages with timeout to allow for clean shutdown
 			sockets, err := r.poller.Poll(500 * time.Millisecond)
 			if err != nil {
 				if r.running {
-					r.logger.Printf("Error polling socket: %v", err)
+					r.logger.Errorf("Error polling socket: %v", err)
 				}
 				continue
 			}
@@ -154,18 +155,24 @@ func (r *MessageReceiver) Start() {
 			// Receive message
 			msg, err := r.socket.RecvBytes(0)
 			if err != nil {
+				// Check specifically for timeout/non-blocking error (EAGAIN)
+				if zmqErr, ok := err.(zmq4.Errno); ok && zmqErr == zmq4.Errno(syscall.EAGAIN) {
+					// Timeout is expected, continue loop
+					continue
+				}
+				// Log other receive errors
 				if r.running {
-					r.logger.Printf("Error receiving message: %v", err)
+					r.logger.Errorf("Error receiving message: %v", err)
 				}
 				continue
 			}
 
-			r.logger.Printf("Received message (%d bytes)", len(msg))
+			r.logger.Debugf("Received message (%d bytes)", len(msg))
 
 			// Process message through dispatcher
 			response, err := r.dispatcher.Dispatch(msg)
 			if err != nil {
-				r.logger.Printf("Error dispatching message: %v", err)
+				r.logger.Errorf("Error dispatching message: %v", err)
 
 				// Create and send error response
 				errorResp := ZeroMQMessage{
@@ -177,16 +184,20 @@ func (r *MessageReceiver) Start() {
 					},
 				}
 
-				errData, _ := json.Marshal(errorResp)
-				if _, err := r.socket.SendBytes(errData, 0); err != nil && r.running {
-					r.logger.Printf("Error sending error response: %v", err)
+				errData, marshalErr := json.Marshal(errorResp)
+				if marshalErr != nil {
+					r.logger.Errorf("Failed to marshal error response: %v", marshalErr)
+					continue // Skip sending if marshal fails
+				}
+				if _, sendErr := r.socket.SendBytes(errData, 0); sendErr != nil && r.running {
+					r.logger.Errorf("Error sending error response: %v", sendErr)
 				}
 				continue
 			}
 
 			// Send response
-			if _, err := r.socket.SendBytes(response, 0); err != nil && r.running {
-				r.logger.Printf("Error sending response: %v", err)
+			if _, sendErr := r.socket.SendBytes(response, 0); sendErr != nil && r.running {
+				r.logger.Errorf("Error sending response: %v", sendErr)
 			}
 		}
 	}()
@@ -199,7 +210,7 @@ func (r *MessageReceiver) Stop() {
 	}
 	r.running = false
 	if r.socket != nil {
-		r.logger.Printf("MessageReceiver: Closing socket to interrupt blocking calls")
+		r.logger.Infof("MessageReceiver: Closing socket to interrupt blocking calls")
 		r.socket.Close()
 	}
 }
@@ -209,7 +220,7 @@ func (r *MessageReceiver) Close() {
 	r.Stop()
 	if r.socket != nil {
 		// Optional: Log if closing again, though Stop should handle it.
-		// r.socket.Close()
+		// r.logger.Debugf("Socket already closed by Stop or closing again.")
 	}
 	r.socket = nil
 }
@@ -217,13 +228,13 @@ func (r *MessageReceiver) Close() {
 // MessageSender handles sending messages to ZeroMQ sockets
 type MessageSender struct {
 	socket  *zmq4.Socket
-	logger  *log.Logger
+	logger  customlog.Logger
 	running bool
 	mu      sync.Mutex
 }
 
 // newMessageSender creates a new MessageSender
-func newMessageSender(ctx *zmq4.Context, cfg *config.Config, logger *log.Logger) (*MessageSender, error) {
+func newMessageSender(ctx *zmq4.Context, cfg *config.Config, logger customlog.Logger) (*MessageSender, error) {
 	// Create PUB socket for publishing messages
 	socket, err := ctx.NewSocket(zmq4.Type(zmq4.PUB))
 	if err != nil {
@@ -243,7 +254,7 @@ func newMessageSender(ctx *zmq4.Context, cfg *config.Config, logger *log.Logger)
 		return nil, fmt.Errorf("failed to set linger option: %w", err)
 	}
 
-	logger.Printf("MessageSender initialized on %s", pubAddress)
+	logger.Infof("MessageSender initialized on %s", pubAddress)
 
 	return &MessageSender{
 		socket:  socket,
@@ -261,6 +272,8 @@ func (s *MessageSender) PublishMessage(topic string, message []byte) error {
 	if !s.running {
 		return ErrServiceClosed
 	}
+
+	s.logger.Debugf("Publishing message to topic '%s' (%d bytes)", topic, len(message))
 
 	// Send two messages in sequence (topic first, then message)
 	_, err := s.socket.Send(topic, zmq4.Flag(zmq4.SNDMORE))
@@ -283,6 +296,7 @@ func (s *MessageSender) Close() {
 
 	s.running = false
 	if s.socket != nil {
+		s.logger.Infof("MessageSender: Closing socket")
 		s.socket.Close()
 		s.socket = nil
 	}
@@ -291,12 +305,12 @@ func (s *MessageSender) Close() {
 // MessageDispatcher routes messages to the appropriate handlers
 type MessageDispatcher struct {
 	handlers map[string]MessageHandler
-	logger   *log.Logger
+	logger   customlog.Logger
 	mu       sync.RWMutex
 }
 
 // NewMessageDispatcher creates a new message dispatcher
-func NewMessageDispatcher(logger *log.Logger) *MessageDispatcher {
+func NewMessageDispatcher(logger customlog.Logger) *MessageDispatcher {
 	return &MessageDispatcher{
 		handlers: make(map[string]MessageHandler),
 		logger:   logger,
@@ -310,7 +324,7 @@ func (d *MessageDispatcher) RegisterHandler(messageType string, handler MessageH
 	defer d.mu.Unlock()
 
 	d.handlers[messageType] = handler
-	d.logger.Printf("Registered handler for message type: %s", messageType)
+	d.logger.Infof("Registered handler for message type: %s", messageType)
 }
 
 // Dispatch processes a message and routes it to the appropriate handler
@@ -319,7 +333,7 @@ func (d *MessageDispatcher) Dispatch(data []byte) ([]byte, error) {
 	var msg ZeroMQMessage
 	if err := json.Unmarshal(data, &msg); err == nil {
 		// Successfully parsed as JSON, check if handler exists
-		d.logger.Printf("Dispatching JSON message of type: %s", msg.Type)
+		d.logger.Debugf("Dispatching JSON message of type: %s", msg.Type)
 		d.mu.RLock()
 		handler, exists := d.handlers[msg.Type]
 		d.mu.RUnlock()
@@ -332,7 +346,7 @@ func (d *MessageDispatcher) Dispatch(data []byte) ([]byte, error) {
 	}
 
 	// JSON parsing failed, assume it's a raw OttMessage FlatBuffer
-	d.logger.Printf("JSON parse failed, attempting to handle as raw Flatbuffer (%d bytes)", len(data))
+	d.logger.Debugf("JSON parse failed, attempting to handle as raw Flatbuffer (%d bytes)", len(data))
 	return d.handleRawFlatbuffer(data)
 }
 
@@ -340,9 +354,9 @@ func (d *MessageDispatcher) Dispatch(data []byte) ([]byte, error) {
 func (d *MessageDispatcher) handleRawFlatbuffer(data []byte) ([]byte, error) {
 	// +++ Add logging for received raw bytes +++
 	if len(data) > 32 {
-		d.logger.Printf("DEBUG handleRawFlatbuffer: Received %d bytes. Data (hex): %x...", len(data), data[:32])
+		d.logger.Debugf("DEBUG handleRawFlatbuffer: Received %d bytes. Data (hex): %x...", len(data), data[:32])
 	} else {
-		d.logger.Printf("DEBUG handleRawFlatbuffer: Received %d bytes. Data (hex): %x", len(data), data)
+		d.logger.Debugf("DEBUG handleRawFlatbuffer: Received %d bytes. Data (hex): %x", len(data), data)
 	}
 
 	// Parse the raw bytes as an OttMessage FlatBuffer
@@ -368,7 +382,7 @@ func (d *MessageDispatcher) handleRawFlatbuffer(data []byte) ([]byte, error) {
 	timestampNs := ottMsg.TimestampNs()
 	version := ottMsg.Version()
 
-	d.logger.Printf(
+	d.logger.Debugf(
 		"Successfully parsed raw Flatbuffer: Topic='%s', Type=%d, PayloadSize=%d, Timestamp=%d, Version=%d",
 		ottTopic,
 		contentType,
@@ -379,7 +393,7 @@ func (d *MessageDispatcher) handleRawFlatbuffer(data []byte) ([]byte, error) {
 
 	// TODO: Add routing/processing logic based on ottTopic and contentType
 	// For now, just log that we received it.
-	d.logger.Printf("Flatbuffer Processing for topic '%s' NOT IMPLEMENTED", ottTopic)
+	d.logger.Warnf("Flatbuffer Processing for topic '%s' NOT IMPLEMENTED", ottTopic)
 
 	// Send back a simple ACK response (as JSON string)
 	ackResponse := ZeroMQMessage{
@@ -394,7 +408,7 @@ func (d *MessageDispatcher) handleRawFlatbuffer(data []byte) ([]byte, error) {
 
 	responseData, err := json.Marshal(ackResponse)
 	if err != nil {
-		d.logger.Printf("Error serializing ACK response for raw flatbuffer topic %s: %v", ottTopic, err)
+		d.logger.Errorf("Error serializing ACK response for raw flatbuffer topic %s: %v", ottTopic, err)
 		// Don't return error to client if ACK fails, just log
 		// Return a generic error response instead?
 		// For now, return error to reflect ACK serialization failure
@@ -412,13 +426,13 @@ type ZeroMQService struct {
 	receiver   *MessageReceiver
 	sender     *MessageSender
 	dispatcher *MessageDispatcher
-	logger     *log.Logger
+	logger     customlog.Logger
 	running    bool
 	wg         sync.WaitGroup
 }
 
 // NewZeroMQService creates a new ZeroMQ service
-func NewZeroMQService(cfg *config.Config, logger *log.Logger) (*ZeroMQService, error) {
+func NewZeroMQService(cfg *config.Config, logger customlog.Logger) (*ZeroMQService, error) {
 	// Create ZeroMQ context
 	ctx, err := zmq4.NewContext()
 	if err != nil {
@@ -475,7 +489,7 @@ func (s *ZeroMQService) Start() error {
 	}
 
 	s.running = true
-	s.logger.Printf("Starting ZeroMQ service")
+	s.logger.Infof("Starting ZeroMQ service")
 
 	// Start the receiver
 	s.receiver.Start()
@@ -489,7 +503,7 @@ func (s *ZeroMQService) Stop() {
 		return
 	}
 
-	s.logger.Printf("Stopping ZeroMQ service")
+	s.logger.Infof("Stopping ZeroMQ service")
 	s.running = false
 
 	// Stop the receiver - THIS NOW CLOSES THE SOCKET TOO
@@ -499,17 +513,18 @@ func (s *ZeroMQService) Stop() {
 	s.sender.Close()
 
 	// Wait for goroutines to finish
-	s.logger.Printf("Waiting for receiver goroutine to finish...")
+	s.logger.Infof("Waiting for receiver goroutine to finish...")
 	s.wg.Wait()
-	s.logger.Printf("Receiver goroutine finished.")
+	s.logger.Infof("Receiver goroutine finished.")
 
 	// Clean up ZeroMQ context
 	if s.ctx != nil {
+		s.logger.Infof("Terminating ZeroMQ context")
 		s.ctx.Term()
 		s.ctx = nil
 	}
 
-	s.logger.Printf("ZeroMQ service stopped")
+	s.logger.Infof("ZeroMQ service stopped")
 }
 
 // PublishMessage sends a message with the given topic

@@ -4,7 +4,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
+	stdlog "log" // Alias standard logger
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -12,11 +13,13 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/logger"
+	fiberlogger "github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
 	// Import our configuration package
 	"github.com/open-teleop/controller/pkg/config"
+	// Import our new logger package
+	customlog "github.com/open-teleop/controller/pkg/log"
 	// Import our ZeroMQ server
 	"github.com/open-teleop/controller/pkg/zeromq"
 )
@@ -25,12 +28,22 @@ func main() {
 	// Parse command line flags
 	environment := flag.String("env", "", "Environment (development, testing, production)")
 	configDir := flag.String("config-dir", "./config", "Path to configuration directory")
+	logLevel := flag.String("log-level", "info", "Logging level (debug, info, warn, error, fatal)")
+	logDir := flag.String("log-dir", "./logs/controller", "Directory to store log files (empty to disable file logging)")
 	flag.Parse()
+
+	// --- Initialize custom logger ---
+	logger, err := customlog.NewLogrusLogger(*logLevel, *logDir)
+	if err != nil {
+		stdlog.Fatalf("Failed to initialize logger: %v", err) // Use standard logger for this critical error
+	}
+	logger.Infof("Logger initialized: Level=%s, Directory='%s'", *logLevel, *logDir)
+	// --- End logger initialization ---
 
 	// Find executable directory for relative paths
 	execPath, err := os.Executable()
 	if err != nil {
-		log.Fatalf("Error determining executable path: %v", err)
+		logger.Fatalf("Error determining executable path: %v", err) // Use new logger
 	}
 	execDir := filepath.Dir(execPath)
 
@@ -45,7 +58,9 @@ func main() {
 				candidateConfigDir := filepath.Join(parentDir, "config")
 				if _, err := os.Stat(candidateConfigDir); err == nil {
 					*configDir = candidateConfigDir
+					logger.Debugf("Using config directory found relative to parent: %s", *configDir)
 				} else {
+					logger.Debugf("Config directory not found in parent, checking GOPATH...")
 					// Try relative to GOPATH
 					gopath := os.Getenv("GOPATH")
 					if gopath != "" {
@@ -53,68 +68,72 @@ func main() {
 						candidateConfigDir = filepath.Join(srcDir, "..", "config")
 						if _, err := os.Stat(candidateConfigDir); err == nil {
 							*configDir = candidateConfigDir
+							logger.Debugf("Using config directory found relative to GOPATH: %s", *configDir)
 						}
 					}
 				}
 			}
 		} else {
 			*configDir = filepath.Join(execDir, *configDir)
+			logger.Debugf("Resolved relative config directory to: %s", *configDir)
 		}
 	}
 
 	// Load configuration
-	log.Printf("Loading configuration from %s for environment %s", *configDir, *environment)
+	logger.Infof("Loading configuration from %s for environment '%s'", *configDir, *environment)
 	cfg, err := config.LoadConfigWithEnv(*configDir, *environment)
 	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+		logger.Fatalf("Failed to load configuration: %v", err) // Use new logger
 	}
 
 	// Log the configuration
-	log.Printf("Loaded configuration for environment: %s", cfg.Environment)
-	log.Printf("Configuration ID: %s, Version: %s", cfg.ConfigID, cfg.Version)
-	log.Printf("Robot ID: %s", cfg.RobotID)
+	logger.Infof("Loaded configuration for environment: %s", cfg.Environment)
+	logger.Infof("Configuration ID: %s, Version: %s", cfg.ConfigID, cfg.Version)
+	logger.Infof("Robot ID: %s", cfg.RobotID)
 
 	// Log ZeroMQ settings
-	log.Printf("ZeroMQ controller address: %s", cfg.ZeroMQ.ControllerAddress)
-	log.Printf("ZeroMQ gateway address: %s", cfg.ZeroMQ.GatewayAddress)
+	logger.Infof("ZeroMQ controller address: %s", cfg.ZeroMQ.ControllerAddress)
+	logger.Infof("ZeroMQ gateway address: %s", cfg.ZeroMQ.GatewayAddress)
 
 	// Log topic mappings summary
 	inboundTopics := cfg.GetTopicMappingsByDirection("INBOUND")
 	outboundTopics := cfg.GetTopicMappingsByDirection("OUTBOUND")
-	log.Printf("Loaded %d topic mappings (%d inbound, %d outbound)",
+	logger.Infof("Loaded %d topic mappings (%d inbound, %d outbound)",
 		len(cfg.TopicMappings), len(inboundTopics), len(outboundTopics))
 
 	// Initialize ZeroMQ service
-	zmqService, err := zeromq.NewZeroMQService(cfg, log.Default())
+	// *** Pass the custom logger instance now ***
+	zmqService, err := zeromq.NewZeroMQService(cfg, logger)
 	if err != nil {
-		log.Fatalf("Failed to initialize ZeroMQ service: %v", err)
+		logger.Fatalf("Failed to initialize ZeroMQ service: %v", err) // Use new logger
 	}
 
 	// Register configuration handlers and publisher
-	configPublisher := zeromq.RegisterConfigHandlers(zmqService, cfg, log.Default())
+	// *** Pass the custom logger instance now ***
+	configPublisher := zeromq.RegisterConfigHandlers(zmqService, cfg, logger)
 
 	// Start the ZeroMQ service
 	if err := zmqService.Start(); err != nil {
-		log.Fatalf("Failed to start ZeroMQ service: %v", err)
+		logger.Fatalf("Failed to start ZeroMQ service: %v", err) // Use new logger
 	}
-	log.Println("ZeroMQ service started successfully")
+	logger.Infof("ZeroMQ service started successfully")
 
 	// Publish initial config notification
 	if err := configPublisher.PublishConfigUpdatedNotification(); err != nil {
-		log.Printf("Warning: Failed to publish config notification: %v", err)
+		logger.Warnf("Warning: Failed to publish config notification: %v", err) // Use new logger
 	}
 
 	// Create a new Fiber app
 	app := fiber.New(fiber.Config{
 		AppName:      "Open-Teleop Controller",
-		ErrorHandler: customErrorHandler,
+		ErrorHandler: customErrorHandler, // Keep custom error handler
 		// Use config for server settings
 		ReadTimeout: time.Duration(cfg.Controller.Server.RequestTimeout) * time.Second,
 		BodyLimit:   cfg.Controller.Server.MaxRequestSize * 1024 * 1024, // Convert MB to bytes
 	})
 
 	// Add middleware
-	app.Use(logger.New())
+	app.Use(fiberlogger.New())
 	app.Use(recover.New())
 
 	// Set up basic routes
@@ -150,9 +169,12 @@ func main() {
 	// Start server in a goroutine
 	go func() {
 		port := cfg.Controller.Server.Port
-		log.Printf("Starting HTTP server on port %d", port)
+		logger.Infof("Starting HTTP server on port %d", port) // Use new logger
 		if err := app.Listen(fmt.Sprintf(":%d", port)); err != nil {
-			log.Fatalf("Server error: %v", err)
+			// Check if the error is due to server shutting down, which is expected
+			if err != http.ErrServerClosed { // You might need to import "net/http"
+				logger.Fatalf("Server error: %v", err) // Use new logger
+			}
 		}
 	}()
 
@@ -161,7 +183,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down server...")
+	logger.Infof("Shutting down server...") // Corrected from Info to Infof
 
 	// Stop the ZeroMQ server
 	zmqService.Stop()
@@ -171,13 +193,14 @@ func main() {
 	defer cancel()
 
 	if err := app.ShutdownWithContext(ctx); err != nil {
-		log.Fatalf("Server shutdown failed: %v", err)
+		logger.Fatalf("Server shutdown failed: %v", err) // Use new logger
 	}
 
-	log.Println("Server gracefully stopped")
+	logger.Infof("Server gracefully stopped") // Corrected from Info to Infof
 }
 
 // customErrorHandler handles errors in a structured way
+// TODO: Consider injecting the logger here if more detailed error logging is needed
 func customErrorHandler(c *fiber.Ctx, err error) error {
 	// Default to 500 Internal Server Error
 	code := fiber.StatusInternalServerError
@@ -187,8 +210,11 @@ func customErrorHandler(c *fiber.Ctx, err error) error {
 		code = e.Code
 	}
 
-	// Log the error
-	log.Printf("HTTP Error [%d]: %v", code, err)
+	// Log the error using standard logger for now, until logger is injected
+	// We could potentially retrieve the logger from the Fiber context if we set it up,
+	// or make the logger a global variable (less ideal).
+	// For now, keeping stdlog for this specific handler.
+	stdlog.Printf("HTTP Error [%d]: %v", code, err)
 
 	// Return JSON error response
 	return c.Status(code).JSON(fiber.Map{
