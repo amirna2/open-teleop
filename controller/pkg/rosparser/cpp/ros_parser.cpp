@@ -36,7 +36,7 @@ static bool g_is_initialized = false;
 static std::mutex g_mutex;
 
 // Global flag for debug logging
-static bool g_debug_logging_enabled = false;
+static bool g_debug_logging_enabled = true;
 
 // Map to store error messages
 static std::unordered_map<int, std::string> g_error_strings = {
@@ -575,9 +575,6 @@ int RosParser_ParseToJson(
     char** json_output,
     char** error_msg)
 {
-    // Add log at the start
-    std::cerr << "[RosParser] Parsing message type: " << (message_type ? message_type : "NULL") << std::endl;
-
     // Check initialization
     if (!g_is_initialized) {
         if (error_msg) {
@@ -598,113 +595,146 @@ int RosParser_ParseToJson(
     const rosidl_message_type_support_t* introspection_ts = nullptr;
     const rosidl_message_type_support_t* rmw_ts = nullptr;
     const rosidl_typesupport_introspection_cpp::MessageMembers* members = nullptr;
-    std::shared_ptr<rcpputils::SharedLibrary> rmw_library = nullptr; // Use SharedLibrary from rosbag2 helpers
+    std::shared_ptr<rcpputils::SharedLibrary> rmw_library = nullptr;
     void* cpp_message_object = nullptr;
-    json result_json; 
-    std::string json_str; 
+    json result_json;
+    std::string json_str;
+
+    // INFO Log 1: Entry Point
+    std::cerr << "[RosParser] INFO: Parsing message type: " << message_type << std::endl;
 
     try {
-        // 1. Get INTROSPECTION type support handle (needed for structure, init/fini, JSON conversion)
+        // 1. Get INTROSPECTION type support handle
         MessageTypeSupport introspection_support_wrapper;
         if (!get_message_type_support(message_type, introspection_support_wrapper)) {
+             // Error logging happens inside get_message_type_support or implicitly returns false
+             // Keep the error return, but primary logging is in the helper
             std::string err = "Unsupported message type (introspection): " + std::string(message_type);
             if (error_msg) *error_msg = allocate_string(err);
+             // ERROR Log 2: Introspection failure (fallback)
+             std::cerr << "[RosParser] ERROR: Failed to get introspection typesupport." << std::endl;
             return ROS_PARSER_ERROR_UNSUPPORTED_TYPE;
         }
         introspection_ts = introspection_support_wrapper.type_support;
+        // INFO Log 2: Introspection Success
+        std::cerr << "[RosParser] INFO: Introspection typesupport loaded." << std::endl;
+
         members = static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers*>(introspection_ts->data);
         if (!members) {
              if (error_msg) *error_msg = allocate_string("Failed to get message members from introspection type support");
+             // ERROR Log 3: Member extraction failure
+              std::cerr << "[RosParser] ERROR: Failed to extract MessageMembers from introspection typesupport." << std::endl;
              return ROS_PARSER_ERROR_SERIALIZATION;
         }
         if (g_debug_logging_enabled) std::cerr << "Using Introspection Type Support Identifier: " << introspection_ts->typesupport_identifier << std::endl;
 
-        // 2. Get RMW-specific type support handle using rosbag2_cpp helpers
-        const std::string rmw_identifier = "rosidl_typesupport_fastrtps_cpp"; // Target RMW
+        // 2. Get RMW-specific type support handle
+        const std::string rmw_identifier = "rosidl_typesupport_fastrtps_cpp";
         try {
-             if (g_debug_logging_enabled) std::cerr << "Attempting to load RMW library for type: " << message_type 
-                       << " with identifier: " << rmw_identifier << std::endl;
-             rmw_library = rosbag2_cpp::get_typesupport_library(message_type, rmw_identifier);
-             if (g_debug_logging_enabled) std::cerr << "Attempting to get RMW handle..." << std::endl;
-             rmw_ts = rosbag2_cpp::get_typesupport_handle(message_type, rmw_identifier, rmw_library);
-             if (g_debug_logging_enabled) std::cerr << "Using RMW Type Support Identifier: " << rmw_ts->typesupport_identifier << std::endl;
+            rmw_library = rosbag2_cpp::get_typesupport_library(message_type, rmw_identifier);
+            rmw_ts = rosbag2_cpp::get_typesupport_handle(message_type, rmw_identifier, rmw_library);
+            // INFO Log 3: RMW Success
+            std::cerr << "[RosParser] INFO: RMW typesupport loaded (" << rmw_identifier << ")." << std::endl;
         } catch (const std::exception& e) {
              std::string err = "Failed to get RMW typesupport ('" + rmw_identifier + "') for " + std::string(message_type) + ": " + e.what();
              if (error_msg) *error_msg = allocate_string(err);
-             // rmw_library shared_ptr will clean up automatically if partially loaded
+             // ERROR Log 4: RMW failure
+              std::cerr << "[RosParser] ERROR: " << err << std::endl;
              return ROS_PARSER_ERROR_UNSUPPORTED_TYPE;
         }
 
-        // *** DESERIALIZATION STEP using rclcpp::SerializationBase ***
         // 3. Prepare serialized message view
         rclcpp::SerializedMessage serialized_msg_view(message_size);
         memcpy(serialized_msg_view.get_rcl_serialized_message().buffer, message_data, message_size);
         serialized_msg_view.get_rcl_serialized_message().buffer_length = message_size;
         serialized_msg_view.get_rcl_serialized_message().buffer_capacity = message_size;
 
-        // 4. Allocate and initialize message object using INTROSPECTION members
+        // 4. Allocate and initialize message object
         cpp_message_object = malloc(members->size_of_);
         if (!cpp_message_object) {
-             if (error_msg) *error_msg = allocate_string("Memory allocation failed for message object");
-             goto cleanup_rmw_library; // Use goto for cleanup - library cleans itself via shared_ptr
+            std::string err = "Memory allocation failed for message object (size: " + std::to_string(members->size_of_) + ")";
+            if (error_msg) *error_msg = allocate_string(err);
+            // ERROR Log 5: Malloc failure
+             std::cerr << "[RosParser] ERROR: " << err << std::endl;
+             goto cleanup_rmw_library;
         }
         members->init_function(cpp_message_object, rosidl_runtime_cpp::MessageInitialization::ZERO);
 
-        // 5. Deserialize using SerializationBase with RMW handle
+        // 5. Deserialize using SerializationBase
         try {
-            rclcpp::SerializationBase serialization_base(rmw_ts); // Use RMW handle
+            rclcpp::SerializationBase serialization_base(rmw_ts);
             serialization_base.deserialize_message(&serialized_msg_view, cpp_message_object);
+             // INFO Log 4: Deserialization Success
+             std::cerr << "[RosParser] INFO: Deserialization successful." << std::endl;
             if (g_debug_logging_enabled) std::cerr << "rclcpp Deserialization successful using RMW handle for type: " << message_type << std::endl;
-            // Add unconditional log for successful deserialization
-            std::cerr << "[RosParser] Deserialization successful for type: " << message_type << std::endl;
         } catch (const std::exception& deserialize_err) {
             std::string err = "rclcpp::SerializationBase::deserialize_message failed: " + std::string(deserialize_err.what());
             if (error_msg) *error_msg = allocate_string(err);
-            goto cleanup_cpp_object; 
-        }
-
-        // *** PARSING TO JSON (using introspection handle) ***
-        if (!message_to_json(introspection_ts, cpp_message_object, result_json)) {
-             std::string err = "Failed to convert deserialized message '" + std::string(message_type) + "' to JSON.";
-             if (error_msg) *error_msg = allocate_string(err);
-             goto cleanup_cpp_object;
-        }
-
-        // 7. Convert JSON to string for output
-        json_str = result_json.dump();
-        *json_output = allocate_string(json_str);
-        if (!*json_output) {
-            if (error_msg) *error_msg = allocate_string("Memory allocation failed for JSON output");
+             // ERROR Log 6: Deserialization failure
+             std::cerr << "[RosParser] ERROR: " << err << std::endl;
             goto cleanup_cpp_object;
         }
 
-        // Add unconditional log for successful JSON conversion
-        std::cerr << "[RosParser] JSON conversion successful. Result size: " << json_str.length() << std::endl;
+        // 6. Parse to JSON
+        if (!message_to_json(introspection_ts, cpp_message_object, result_json)) {
+             std::string err = "Failed to convert deserialized message '" + std::string(message_type) + "' to JSON.";
+             if (error_msg) *error_msg = allocate_string(err);
+             // ERROR Log 7: message_to_json failure
+             std::cerr << "[RosParser] ERROR: " << err << std::endl;
+             goto cleanup_cpp_object;
+        }
+
+        // 7. Convert JSON to string
+        try {
+            json_str = result_json.dump();
+            // INFO Log 5: JSON Conversion Success
+            std::cerr << "[RosParser] INFO: JSON conversion successful (string size: " << json_str.length() << ")." << std::endl;
+            // JSON RESULT Log
+            std::cerr << "[RosParser] JSON_RESULT: " << json_str << std::endl;
+        } catch (const json::exception& json_ex) {
+            std::string err = "Failed to dump JSON object to string: " + std::string(json_ex.what());
+            if (error_msg) *error_msg = allocate_string(err);
+             // ERROR Log 8: JSON dump failure
+             std::cerr << "[RosParser] ERROR: " << err << std::endl;
+             goto cleanup_cpp_object;
+        }
+
+        // 8. Allocate output string
+        *json_output = allocate_string(json_str);
+        if (!*json_output) {
+            std::string err = "Memory allocation failed for JSON output";
+            if (error_msg) *error_msg = allocate_string(err);
+             // ERROR Log 9: Output allocation failure
+             std::cerr << "[RosParser] ERROR: " << err << std::endl;
+            goto cleanup_cpp_object;
+        }
 
         // Success path cleanup
         members->fini_function(cpp_message_object);
         free(cpp_message_object);
-        cpp_message_object = nullptr; 
-        // rmw_library shared_ptr cleans up automatically
-        // Add unconditional log just before returning success
-        std::cerr << "[RosParser] ParseToJson completed successfully for type: " << message_type << std::endl;
+        cpp_message_object = nullptr;
+        // INFO Log 6: Success Exit
+        std::cerr << "[RosParser] INFO: ParseToJson returning SUCCESS." << std::endl;
         return ROS_PARSER_SUCCESS;
 
-    // Cleanup blocks using goto
+    // Cleanup blocks
     cleanup_cpp_object:
         if (cpp_message_object) {
             members->fini_function(cpp_message_object);
             free(cpp_message_object);
         }
-    cleanup_rmw_library: // Label kept for structure, but library uses shared_ptr
-        // No explicit unload needed for shared_ptr library handle
-        return ROS_PARSER_ERROR_SERIALIZATION; 
+    cleanup_rmw_library:
+         // ERROR Log 10: Error Exit
+         std::cerr << "[RosParser] ERROR: ParseToJson returning FAILURE (check preceding error)." << std::endl;
+        return ROS_PARSER_ERROR_SERIALIZATION;
 
     } catch (const std::exception& e) {
-        if (error_msg) *error_msg = allocate_string(e.what());
+         // FATAL Log: Unhandled Exception
+        std::string err = "Unhandled exception in RosParser_ParseToJson: " + std::string(e.what());
+        if (error_msg) *error_msg = allocate_string(err);
+        std::cerr << "[RosParser] FATAL: " << err << std::endl;
         // Ensure cleanup happens even on generic exceptions
         if (cpp_message_object && members) { members->fini_function(cpp_message_object); free(cpp_message_object); }
-        // rmw_library shared_ptr cleans up automatically
         return ROS_PARSER_ERROR_UNKNOWN;
     }
 }
