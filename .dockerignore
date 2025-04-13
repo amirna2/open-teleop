@@ -1,0 +1,17 @@
+.git
+.vscode
+*.code-workspace
+build/
+install/
+log/
+logs/
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+controller/bin/
+controller/pkg/flatbuffers/gen/ # Assuming generated code is here
+ros2_ws/src/ros_gateway/ros_gateway/flatbuffers/gen/ # Assuming generated code is here
+**/.DS_Store
+**/.env
+**/__pycache__/
+**/*.pyc 
