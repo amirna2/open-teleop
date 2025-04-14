@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-colcon-common-extensions \
     python3-zmq \
     python3-flatbuffers \
+    ros-jazzy-rmw-cyclonedds-cpp \
     # ROS packages should be included in base or pulled by colcon/rosdep
     # Clean up apt cache to reduce image size
     && rm -rf /var/lib/apt/lists/*
@@ -45,6 +46,9 @@ WORKDIR /open-teleop_ws
 
 # Copy the entire project context
 COPY . .
+
+# Copy the CycloneDDS configuration file
+COPY ros2_ws/src/ros_gateway/config/cyclonedds.xml /open-teleop_ws/ros2_ws/src/ros_gateway/config/cyclonedds.xml
 
 # Make scripts executable (including entrypoint)
 # Run this before USER switch to avoid needing sudo

@@ -18,6 +18,13 @@ else
     exit 1
 fi
 
+# Set RMW Implementation to CycloneDDS
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+# Configure CycloneDDS using the XML file
+export CYCLONEDDS_URI=/open-teleop_ws/ros2_ws/src/ros_gateway/config/cyclonedds.xml
+echo "ROS_GATEWAY configured to use RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION with CycloneDDS URI: $CYCLONEDDS_URI"
+
 # Start the Go controller in the background
 echo "Starting Go controller in background..."
 # Note: Assumes controller reads config from /open-teleop_ws/config
