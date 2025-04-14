@@ -4,27 +4,6 @@ config_id: "unified-config-2025-03-17"
 lastUpdated: "2025-03-17T00:00:00Z"
 robot_id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
 
-# Controller-specific settings
-controller:
-  server:
-    port: 8080
-    request_timeout: 30
-    max_request_size: 10
-  
-# ZeroMQ communication settings
-zeromq:
-  # Controller binds to this address to receive messages from gateways
-  controller_address: "tcp://*:5555"
-  # Controller binds to this address to publish messages to gateways
-  gateway_address: "tcp://*:5556"
-  # Gateway connects to this address to send messages to controller
-  gateway_connect_address: "tcp://localhost:5555"
-  # Gateway connects to this address to receive messages from controller
-  gateway_subscribe_address: "tcp://localhost:5556"
-  # Communication settings
-  message_buffer_size: 1000
-  reconnect_interval_ms: 1000
-
 # Topic mappings configuration
 topic_mappings:
   # Sensor data (OUTBOUND - from ROS to controller)

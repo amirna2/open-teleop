@@ -4,6 +4,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -15,56 +16,43 @@ func TestLoadConfig(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
+	// Updated configContent matching open_teleop_config.yaml structure
 	configContent := `
+# Test config matching the structure of config/open_teleop_config.yaml
 version: "1.0"
-config_id: "test-config"
-lastUpdated: "2025-03-16T10:00:00Z"
-environment: "testing"
-robot_id: "test-robot-id"
+config_id: "test-teleop-config" # Example ID matching file structure
+lastUpdated: "2024-01-01T00:00:00Z" # Example timestamp
+robot_id: "test-robot-teleop" # Example robot ID
 
-controller:
-  server:
-    port: 8080
-    request_timeout: 30
-    max_request_size: 10
-
-  processing:
-    high_priority_workers: 4
-    standard_priority_workers: 2
-    low_priority_workers: 1
-
-zeromq:
-  controller_address: "tcp://*:5555"
-  gateway_address: "tcp://*:5556"
-  gateway_connect_address: "tcp://localhost:5555"
-  gateway_subscribe_address: "tcp://localhost:5556"
-  message_buffer_size: 1000
-  reconnect_interval_ms: 1000
-
+# Topic mappings section
 topic_mappings:
-  - ros_topic: "/battery_state"
-    ott: "teleop.sensor.battery"
+  # Example OUTBOUND
+  - ros_topic: "/test_sensors"
+    ott: "teleop.test.sensors"
     priority: "STANDARD"
-    message_type: "sensor_msgs/msg/BatteryState"
+    message_type: "sensor_msgs/msg/Image" # Example type
     direction: "OUTBOUND"
     source_type: "ROS2_CDR"
-  
-  - ros_topic: "/cmd_vel"
-    ott: "teleop.control.velocity"
+
+  # Example INBOUND
+  - ros_topic: "/test_control"
+    ott: "teleop.test.control"
     priority: "HIGH"
-    message_type: "geometry_msgs/msg/Twist"
+    message_type: "geometry_msgs/msg/Twist" # Example type
     direction: "INBOUND"
     source_type: "ROS2_CDR"
 
+# Defaults section
 defaults:
   priority: "STANDARD"
   direction: "OUTBOUND"
   source_type: "ROS2_CDR"
 
+# Throttle rates section
 throttle_rates:
   high_hz: 0
-  standard_hz: 10
-  low_hz: 1
+  standard_hz: 15 # Example value
+  low_hz: 2       # Example value
 `
 
 	configPath := filepath.Join(tempDir, "test_config.yaml")
@@ -83,30 +71,12 @@ throttle_rates:
 		t.Errorf("Expected version 1.0, got %s", config.Version)
 	}
 
-	if config.ConfigID != "test-config" {
-		t.Errorf("Expected config_id test-config, got %s", config.ConfigID)
+	if config.ConfigID != "test-teleop-config" {
+		t.Errorf("Expected config_id test-teleop-config, got %s", config.ConfigID)
 	}
 
-	if config.Environment != "testing" {
-		t.Errorf("Expected environment testing, got %s", config.Environment)
-	}
-
-	if config.RobotID != "test-robot-id" {
-		t.Errorf("Expected robot_id test-robot-id, got %s", config.RobotID)
-	}
-
-	// Verify controller config
-	if config.Controller.Server.Port != 8080 {
-		t.Errorf("Expected port 8080, got %d", config.Controller.Server.Port)
-	}
-
-	// Verify ZeroMQ config
-	if config.ZeroMQ.ControllerAddress != "tcp://*:5555" {
-		t.Errorf("Expected controller_address tcp://*:5555, got %s", config.ZeroMQ.ControllerAddress)
-	}
-
-	if config.ZeroMQ.MessageBufferSize != 1000 {
-		t.Errorf("Expected message_buffer_size 1000, got %d", config.ZeroMQ.MessageBufferSize)
+	if config.RobotID != "test-robot-teleop" {
+		t.Errorf("Expected robot_id test-robot-teleop, got %s", config.RobotID)
 	}
 
 	// Verify topics
@@ -114,104 +84,15 @@ throttle_rates:
 		t.Errorf("Expected 2 topic mappings, got %d", len(config.TopicMappings))
 	}
 
-	// Verify throttle rates
+	// Verify throttle rates (using updated example values)
 	if config.ThrottleRates.HighHz != 0 {
 		t.Errorf("Expected high_hz 0, got %d", config.ThrottleRates.HighHz)
 	}
-}
-
-func TestEnvironmentOverrides(t *testing.T) {
-	// Create a temporary test config file
-	tempDir, err := ioutil.TempDir("", "config-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
+	if config.ThrottleRates.StandardHz != 15 {
+		t.Errorf("Expected standard_hz 15, got %d", config.ThrottleRates.StandardHz)
 	}
-	defer os.RemoveAll(tempDir)
-
-	configContent := `
-version: "1.0"
-config_id: "test-config"
-lastUpdated: "2025-03-16T10:00:00Z"
-environment: "testing"
-robot_id: "test-robot-id"
-
-controller:
-  server:
-    port: 8080
-    request_timeout: 30
-    max_request_size: 10
-
-  processing:
-    high_priority_workers: 4
-    standard_priority_workers: 2
-    low_priority_workers: 1
-
-zeromq:
-  controller_address: "tcp://*:5555"
-  gateway_address: "tcp://*:5556"
-  gateway_connect_address: "tcp://localhost:5555"
-  gateway_subscribe_address: "tcp://localhost:5556"
-  message_buffer_size: 1000
-  reconnect_interval_ms: 1000
-
-topic_mappings:
-  - ros_topic: "/battery_state"
-    ott: "teleop.sensor.battery"
-    priority: "STANDARD"
-    message_type: "sensor_msgs/msg/BatteryState"
-    direction: "OUTBOUND"
-    source_type: "ROS2_CDR"
-  
-  - ros_topic: "/cmd_vel"
-    ott: "teleop.control.velocity"
-    priority: "HIGH"
-    message_type: "geometry_msgs/msg/Twist"
-    direction: "INBOUND"
-    source_type: "ROS2_CDR"
-
-defaults:
-  priority: "STANDARD"
-  direction: "OUTBOUND"
-  source_type: "ROS2_CDR"
-
-throttle_rates:
-  high_hz: 0
-  standard_hz: 10
-  low_hz: 1
-`
-
-	configPath := filepath.Join(tempDir, "test_config.yaml")
-	if err := ioutil.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		t.Fatalf("Failed to write test config: %v", err)
-	}
-
-	// Set environment variables
-	os.Setenv("TELEOP_ZMQ_CONTROLLER_ADDRESS", "tcp://*:5559")
-	os.Setenv("TELEOP_SERVER_PORT", "9090")
-	os.Setenv("TELEOP_THROTTLE_LOW_HZ", "5")
-	defer func() {
-		os.Unsetenv("TELEOP_ZMQ_CONTROLLER_ADDRESS")
-		os.Unsetenv("TELEOP_SERVER_PORT")
-		os.Unsetenv("TELEOP_THROTTLE_LOW_HZ")
-	}()
-
-	// Test loading the config with environment overrides
-	config, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-
-	// Verify that environment variables override config values
-	if config.ZeroMQ.ControllerAddress != "tcp://*:5559" {
-		t.Errorf("Environment override failed. Expected controller_address tcp://*:5559, got %s", config.ZeroMQ.ControllerAddress)
-	}
-
-	if config.Controller.Server.Port != 9090 {
-		t.Errorf("Environment override failed. Expected port 9090, got %d", config.Controller.Server.Port)
-	}
-
-	if config.ThrottleRates.LowHz != 5 {
-		t.Errorf("Environment override failed. Expected low_hz 5, got %d", config.ThrottleRates.LowHz)
+	if config.ThrottleRates.LowHz != 2 {
+		t.Errorf("Expected low_hz 2, got %d", config.ThrottleRates.LowHz)
 	}
 }
 
@@ -261,8 +142,8 @@ func TestTopicMappingHelpers(t *testing.T) {
 	}
 
 	outboundTopics := config.GetTopicMappingsByDirection("OUTBOUND")
-	if len(outboundTopics) != 3 {
-		t.Errorf("Expected 3 outbound topics, got %d", len(outboundTopics))
+	if len(outboundTopics) != 2 {
+		t.Errorf("Expected 2 outbound topics, got %d", len(outboundTopics))
 	}
 
 	// Test GetTopicMappingByOttTopic
@@ -298,4 +179,130 @@ func TestTopicMappingHelpers(t *testing.T) {
 	if found {
 		t.Errorf("Expected not to find teleop.nonexistent topic")
 	}
+}
+
+func TestLoadBootstrapConfig(t *testing.T) {
+	// Create a temporary directory for the bootstrap config
+	tempDir, err := ioutil.TempDir("", "bootstrap-config-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Define the content for the temporary bootstrap config file
+	bootstrapContent := `
+logging:
+  level: "debug"
+  log_path: "/var/log/controller"
+server:
+  http_port: 9090
+zeromq:
+  request_bind_address: "tcp://*:6666"
+  publish_bind_address: "tcp://*:7777"
+  message_buffer_size: 2000
+  reconnect_interval_ms: 500
+data:
+  directory: "/data/controller"
+  teleop_config_file: "my_teleop_config.yaml"
+processing:
+  high_priority_workers: 5
+  standard_priority_workers: 3
+  low_priority_workers: 2
+`
+	// Write the temporary bootstrap config file
+	configPath := filepath.Join(tempDir, "controller_config.yaml")
+	if err := ioutil.WriteFile(configPath, []byte(bootstrapContent), 0644); err != nil {
+		t.Fatalf("Failed to write test bootstrap config: %v", err)
+	}
+
+	// Test loading the bootstrap config
+	bootstrapCfg, err := LoadBootstrapConfig(tempDir)
+	if err != nil {
+		t.Fatalf("LoadBootstrapConfig failed: %v", err)
+	}
+
+	// Verify loaded values
+	if bootstrapCfg.Logging.Level != "debug" {
+		t.Errorf("Expected logging level 'debug', got '%s'", bootstrapCfg.Logging.Level)
+	}
+	if bootstrapCfg.Logging.LogPath != "/var/log/controller" {
+		t.Errorf("Expected log path '/var/log/controller', got '%s'", bootstrapCfg.Logging.LogPath)
+	}
+	if bootstrapCfg.Server.HTTPPort != 9090 {
+		t.Errorf("Expected server http_port 9090, got %d", bootstrapCfg.Server.HTTPPort)
+	}
+	if bootstrapCfg.ZeroMQ.RequestBindAddress != "tcp://*:6666" {
+		t.Errorf("Expected zeromq request_bind_address 'tcp://*:6666', got '%s'", bootstrapCfg.ZeroMQ.RequestBindAddress)
+	}
+	if bootstrapCfg.ZeroMQ.PublishBindAddress != "tcp://*:7777" {
+		t.Errorf("Expected zeromq publish_bind_address 'tcp://*:7777', got '%s'", bootstrapCfg.ZeroMQ.PublishBindAddress)
+	}
+	if bootstrapCfg.ZeroMQ.MessageBufferSize != 2000 {
+		t.Errorf("Expected zeromq message_buffer_size 2000, got %d", bootstrapCfg.ZeroMQ.MessageBufferSize)
+	}
+	if bootstrapCfg.ZeroMQ.ReconnectIntervalMs != 500 {
+		t.Errorf("Expected zeromq reconnect_interval_ms 500, got %d", bootstrapCfg.ZeroMQ.ReconnectIntervalMs)
+	}
+	if bootstrapCfg.Data.Directory != "/data/controller" {
+		t.Errorf("Expected data directory '/data/controller', got '%s'", bootstrapCfg.Data.Directory)
+	}
+	if bootstrapCfg.Data.TeleopConfigFilename != "my_teleop_config.yaml" {
+		t.Errorf("Expected data teleop_config_file 'my_teleop_config.yaml', got '%s'", bootstrapCfg.Data.TeleopConfigFilename)
+	}
+	if bootstrapCfg.Processing.StandardPriorityWorkers != 3 {
+		t.Errorf("Expected processing standard_priority_workers 3, got %d", bootstrapCfg.Processing.StandardPriorityWorkers)
+	}
+	if bootstrapCfg.Processing.HighPriorityWorkers != 5 {
+		t.Errorf("Expected processing high_priority_workers 5, got %d", bootstrapCfg.Processing.HighPriorityWorkers)
+	}
+	if bootstrapCfg.Processing.LowPriorityWorkers != 2 {
+		t.Errorf("Expected processing low_priority_workers 2, got %d", bootstrapCfg.Processing.LowPriorityWorkers)
+	}
+}
+
+// Test case for missing required fields validation in LoadBootstrapConfig
+func TestLoadBootstrapConfigMissingRequired(t *testing.T) {
+	tempDir, err := ioutil.TempDir("", "bootstrap-config-missing-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Missing 'zeromq.request_bind_address'
+	bootstrapContentMissing := `
+logging:
+  level: "info"
+server:
+  http_port: 8080
+zeromq:
+  # request_bind_address: "tcp://*:6666" # Missing
+  publish_bind_address: "tcp://*:7777"
+  message_buffer_size: 1000
+  reconnect_interval_ms: 1000
+data:
+  directory: "/data"
+  teleop_config_file: "op_config.yaml"
+processing:
+  high_priority_workers: 4
+  standard_priority_workers: 2
+  low_priority_workers: 1
+`
+	configPath := filepath.Join(tempDir, "controller_config.yaml")
+	if err := ioutil.WriteFile(configPath, []byte(bootstrapContentMissing), 0644); err != nil {
+		t.Fatalf("Failed to write test bootstrap config: %v", err)
+	}
+
+	// Attempt to load the config with missing field
+	_, err = LoadBootstrapConfig(tempDir)
+	if err == nil {
+		t.Errorf("Expected error when loading bootstrap config with missing required fields, but got nil")
+	}
+
+	// Check if the error message contains the expected field name
+	expectedErrorSubstr := "missing required field in bootstrap config: zeromq.request_bind_address"
+	if err != nil && !strings.Contains(err.Error(), expectedErrorSubstr) {
+		t.Errorf("Expected error message to contain '%s', but got: %v", expectedErrorSubstr, err)
+	}
+
+	// Note: Could add separate test cases for other required fields if desired
 }
