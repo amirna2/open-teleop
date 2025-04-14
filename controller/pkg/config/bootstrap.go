@@ -19,7 +19,8 @@ type BootstrapConfig struct {
 
 // LoggingConfig holds logging settings from bootstrap
 type LoggingConfig struct {
-	Level string `yaml:"level"`
+	Level   string `yaml:"level"`
+	LogPath string `yaml:"log_path,omitempty"`
 }
 
 // ServerConfig holds bootstrap server settings

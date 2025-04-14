@@ -35,7 +35,6 @@ func main() {
 	environmentFlag := flag.String("env", "", "Environment (development, testing, production)")
 	configDir := flag.String("config-dir", "./config", "Path to configuration directory containing controller_config.yaml")
 	logLevelFlag := flag.String("log-level", "", "Logging level (debug, info, warn, error, fatal) - overrides bootstrap config if set")
-	logDir := flag.String("log-dir", "./logs/controller", "Directory to store log files (empty to disable file logging)")
 	flag.Parse()
 
 	// --- Find executable directory for relative paths ---
@@ -82,17 +81,30 @@ func main() {
 	}
 
 	// --- Initialize Custom Logger ---
-	// Use command-line flag if provided, otherwise use bootstrap config
+	// Determine final log level (Flag > Bootstrap Config)
 	finalLogLevel := bootstrapCfg.Logging.Level
 	if *logLevelFlag != "" {
 		finalLogLevel = *logLevelFlag
 		stdlog.Printf("Overriding bootstrap log level with command-line flag: %s", finalLogLevel)
 	}
-	logger, err := customlog.NewLogrusLogger(finalLogLevel, *logDir)
+
+	// Determine final log path (Environment > Bootstrap Config > Default empty string)
+	finalLogPath := os.Getenv("CONTROLLER_LOG_PATH") // Check environment variable first
+	if finalLogPath == "" {
+		finalLogPath = bootstrapCfg.Logging.LogPath // Fallback to bootstrap config value
+	}
+	if finalLogPath == "" {
+		stdlog.Printf("Log path not specified via CONTROLLER_LOG_PATH or bootstrap config. Disabling file logging.")
+	} else {
+		stdlog.Printf("Using log directory: %s (from CONTROLLER_LOG_PATH or bootstrap config)", finalLogPath)
+	}
+
+	// Initialize logger with determined level and path
+	logger, err := customlog.NewLogrusLogger(finalLogLevel, finalLogPath)
 	if err != nil {
 		stdlog.Fatalf("Failed to initialize logger: %v", err) // Use standard logger for this critical error
 	}
-	logger.Infof("Logger initialized: Level=%s, Directory='%s'", finalLogLevel, *logDir)
+	logger.Infof("Logger initialized: Level=%s, Directory='%s'", finalLogLevel, finalLogPath)
 
 	// --- Load Operational Configuration (open_teleop_config.yaml) ---
 	// Expect the operational config file to be in the same directory as the bootstrap config.
