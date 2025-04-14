@@ -1,0 +1,29 @@
+# config/controller-config.yaml
+# Bootstrap configuration for the Open-Teleop Controller
+
+version: "1.0" # Schema version for this config file
+
+logging:
+  level: "INFO" # Options: DEBUG, INFO, WARN, ERROR
+  
+server:
+  http_port: 8080 # Port for the controller's internal HTTP server (e.g., for admin API / healthchecks)
+
+zeromq:
+  # Address the controller binds to for receiving requests (e.g., from gateway)
+  request_bind_address: "tcp://*:5555" 
+  # Address the controller binds to for publishing messages (e.g., config updates, commands)
+  publish_bind_address: "tcp://*:5556"
+  
+  # ZeroMQ communication settings
+  message_buffer_size: 1000
+  reconnect_interval_ms: 1000
+
+data:
+  # Directory inside the container where fetched/managed teleop configs are stored
+  directory: "/teleop_data" # Mounted volume
+  # Name of the teleop config file
+  teleop_config_file: "open_teleop_config.yaml"
+
+# Optional: Add any other controller-specific operational settings here
+# e.g., processing queue sizes if not derived from teleop config

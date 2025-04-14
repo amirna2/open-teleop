@@ -1,3 +1,6 @@
+# config/gateway-config.yaml
+# Bootstrap configuration for the ROS Gateway
+
 gateway:
   # ZeroMQ configuration for connecting to the controller
   zmq:
@@ -15,5 +18,8 @@ gateway:
   logging:
     level: "DEBUG"
     log_to_file: true
-    log_path: "logs/ros_gateway"
+    log_path: "/teleop_data/logs/ros_gateway"
     log_rotation_days: 7 
+
+# Optional: Add any other gateway-specific operational settings here
+# e.g., processing queue sizes if not derived from teleop config
