@@ -4,15 +4,21 @@ FROM ros:jazzy-ros-base-noble
 # Set non-interactive frontend for apt to avoid prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Define Go version and paths (Using 1.18 as minimum mentioned in dev_setup.sh)
-# Update this version if a newer one is strictly required
-# Or specify a newer version like 1.22.3 if preferred
+# --- Add user/group setup ---
+ARG UID=1978
+ARG GID=1978
+RUN groupadd --gid $GID teleop && \
+    useradd --uid $UID --gid $GID --create-home --shell /bin/bash teleop
+# --- End user/group setup ---
+
+# Define Go version and paths
 ENV GO_VERSION=1.24.1
 ENV GOPATH=/go
 ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
 
 # Install system dependencies required by open-teleop
 # Base image includes git, build-essential, cmake, python3-pip
+# Adding python3-colcon-common-extensions, python3-zmq, python3-flatbuffers here
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     libzmq3-dev \
@@ -29,21 +35,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN wget "https://golang.org/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tar.gz && \
     tar -C /usr/local -xzf /tmp/go.tar.gz && \
     rm /tmp/go.tar.gz && \
+    # --- Create GOPATH and set ownership ---
     mkdir -p "$GOPATH/src" "$GOPATH/bin" && \
-    chmod -R 777 "$GOPATH" # Note: Using 777 for simplicity, refine if needed
-
-# Python dependencies are now installed via apt above
+    chown -R teleop:teleop "$GOPATH"
+    # --- End ownership change ---
 
 # Set working directory for subsequent commands
 WORKDIR /open-teleop_ws
 
-# Copy the entire project context from the host into the image WORKDIR
-# Ensure you have a .dockerignore file to exclude large/unnecessary files (like logs/, build/, install/)
+# Copy the entire project context
 COPY . .
 
-# Make scripts executable
-RUN chmod +x ./scripts/*.sh
+# Make scripts executable (including entrypoint)
+# Run this before USER switch to avoid needing sudo
+RUN chmod +x ./scripts/*.sh \
+    && chmod +x ./scripts/entrypoint.sh
 
-# Default command: Build all components and run tests
-# The scripts handle sourcing ROS environment internally.
-CMD ["/bin/bash", "-c", "./scripts/build.sh all && ./scripts/run_tests.sh"] 
+# --- Set ownership of copied files ---
+RUN chown -R teleop:teleop /open-teleop_ws
+
+# --- Build the project BEFORE switching user ---
+# Run the build script as root, as it might need permissions for colcon etc.
+# Alternatively, grant sudo access to teleop user, but running as root is simpler here.
+RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && ./scripts/build.sh all"
+
+# --- Switch to non-root user ---
+USER teleop:teleop
+
+# --- Set Entrypoint ---
+ENTRYPOINT ["/open-teleop_ws/scripts/entrypoint.sh"]
+
+# CMD can be removed or left empty as ENTRYPOINT is used
+# CMD []
