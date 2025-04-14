@@ -5,7 +5,7 @@ gateway:
   # ZeroMQ configuration for connecting to the controller
   zmq:
     controller_address: "tcp://localhost:5555"
-    publish_address: "tcp://*:5556"
+    publish_address: "tcp://localhost:5556"
     message_buffer_size: 1000
     reconnect_interval_ms: 1000
     
@@ -18,7 +18,7 @@ gateway:
   logging:
     level: "DEBUG"
     log_to_file: true
-    log_path: "/teleop_data/logs/ros_gateway"
+    log_path: "/tmp/open_teleop_logs"
     log_rotation_days: 7 
 
 # Optional: Add any other gateway-specific operational settings here

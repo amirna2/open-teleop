@@ -9,6 +9,7 @@ import signal
 import yaml
 import json
 import time
+import argparse
 from threading import Thread, Event
 
 # Import custom logger
@@ -21,6 +22,40 @@ from ros_gateway.topic_subscriber.topic_manager import TopicManager
 from ros_gateway.message_converter.converter import MessageConverter
 from ros_gateway.topic_publisher.publisher import TopicPublisher
 
+def load_config_from_yaml(config_path, logger):
+    """Load configuration from a YAML file."""
+    logger.info(f"Attempting to load configuration from: {config_path}")
+    try:
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+            if config:
+                logger.info(f"Successfully loaded configuration from {config_path}")
+                return config
+            else:
+                logger.warning(f"Configuration file {config_path} is empty.")
+                return {}
+    except FileNotFoundError:
+        logger.error(f"Configuration file not found: {config_path}")
+        return {}
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing configuration file {config_path}: {e}")
+        return {}
+    except Exception as e:
+        logger.error(f"Unexpected error loading configuration file {config_path}: {e}")
+        return {}
+
+def get_config_value(env_var, config_dict, default_value):
+    """Get config value with precedence: ENV > YAML > Default."""
+    value = os.environ.get(env_var)
+    if value is not None:
+        return value
+    if config_dict is not None:
+        # Assume config_dict keys match env var names for simplicity, or adjust logic
+        # Example: if env_var is TELEOP_ZMQ_CONTROLLER_ADDRESS, look for 'gateway.zmq.controller_address'
+        # This part needs refinement based on YAML structure
+        pass # Placeholder - Need actual key mapping
+    return default_value
+
 class RosGateway(Node):
     """
     ROS Gateway for Open-Teleop.
@@ -32,25 +67,26 @@ class RosGateway(Node):
     - Command reception and publishing to ROS
     """
     
-    def __init__(self):
+    def __init__(self, config_path):
         super().__init__('ros_gateway')
         
-        # Determine project root path (3 levels up from this file)
-        # This file is in ros2_ws/src/ros_gateway/ros_gateway/gateway_node.py
-        # So we need to go up 4 levels to get to the project root
-        self.project_root = os.path.abspath(os.path.join(
-            os.path.dirname(__file__), 
-            '../../../../'
-        ))
+        # Determine project root path (adjust levels if needed)
+        self.project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../'))
         
-        # Set up custom logger with temporary location
+        # Basic logger setup first, will be reconfigured later if possible
         self.logger = log.get_logger(
             name=f"{self.get_name()}",
-            log_dir="/tmp/open_teleop_logs",
+            log_dir="/tmp/open_teleop_logs", # Temporary initial path
             console_level=log.DEBUG,
             file_level=log.DEBUG
         )
         
+        # Load bootstrap configuration from YAML file
+        self.bootstrap_config = load_config_from_yaml(config_path, self.logger)
+        
+        # Configure logging based on bootstrap config (or keep initial if fails)
+        self._configure_logging()
+
         # Display welcome message
         self.logger.info('='*80)
         self.logger.info('Hello, I am the ROS Gateway for Open-Teleop!')
@@ -58,19 +94,21 @@ class RosGateway(Node):
         self.logger.info('='*80)
         self.logger.info('Starting ROS Gateway for Open-Teleop')
         self.logger.info(f'Project root: {self.project_root}')
-        
+        self.logger.info(f'Using bootstrap config file: {config_path}')
+
         # Initialize the message converter
         self.converter = MessageConverter()
-        
-        # Get ZeroMQ configuration from environment variables with fallback defaults
-        controller_address = os.environ.get('TELEOP_ZMQ_CONTROLLER_ADDRESS', 'tcp://localhost:5555')
-        publish_address = os.environ.get('TELEOP_ZMQ_PUBLISH_ADDRESS', 'tcp://localhost:5556')
-        message_buffer_size = int(os.environ.get('TELEOP_ZMQ_BUFFER_SIZE', '1000'))
-        reconnect_interval_ms = int(os.environ.get('TELEOP_ZMQ_RECONNECT_INTERVAL_MS', '1000'))
-        
+
+        # Get ZeroMQ configuration (ENV > YAML > Default)
+        zmq_config = self.bootstrap_config.get('gateway', {}).get('zmq', {})
+        controller_address = os.environ.get('TELEOP_ZMQ_CONTROLLER_ADDRESS') or zmq_config.get('controller_address', 'tcp://localhost:5555')
+        publish_address = os.environ.get('TELEOP_ZMQ_PUBLISH_ADDRESS') or zmq_config.get('publish_address', 'tcp://localhost:5556')
+        message_buffer_size = int(os.environ.get('TELEOP_ZMQ_BUFFER_SIZE') or zmq_config.get('message_buffer_size', 1000))
+        reconnect_interval_ms = int(os.environ.get('TELEOP_ZMQ_RECONNECT_INTERVAL_MS') or zmq_config.get('reconnect_interval_ms', 1000))
+
         self.logger.info(f"Using ZMQ controller address: {controller_address}")
         self.logger.info(f"Using ZMQ publish address: {publish_address}")
-        
+
         # Initialize the ZeroMQ client early with bootstrap configuration
         self.zmq_client = ZmqClient(
             controller_address=controller_address,
@@ -79,46 +117,47 @@ class RosGateway(Node):
             reconnect_interval_ms=reconnect_interval_ms,
             logger=self.logger
         )
-        
-        # Request configuration from the controller
+
+        # Request operational configuration from the controller
         self.config = self.request_configuration()
         
-        # Display config info
-        self.logger.info(f"Loaded configuration version: {self.config.get('version')}")
-        self.logger.info(f"Config ID: {self.config.get('config_id')}")
-        self.logger.info(f"Robot ID: {self.config.get('robot_id')}")
-        
-        # Log topic mappings
-        topic_mappings = self.config.get('topic_mappings', [])
-        
-        # Log each topic mapping with its keys
-        for i, mapping in enumerate(topic_mappings):
-            self.logger.info(f"Topic mapping {i+1}: {json.dumps(mapping)}")
-            self.logger.debug(f"  Keys: {list(mapping.keys())}")
-        
-        # Get defaults
-        defaults = self.config.get('defaults', {})
-        self.logger.info(f"Default values: {json.dumps(defaults)}")
-        
-        # Extract topic lists for logging
-        ros2_topics = [m.get('ros_topic') for m in topic_mappings]
-        ott_topics = [m.get('ott') for m in topic_mappings]
-        self.logger.info(f"Found {len(ros2_topics)} ROS2 topics and {len(ott_topics)} Open-Teleop topics")
-        
-        # Filter topic mappings by direction
-        inbound_topics = self.filter_topic_mappings_by_direction(topic_mappings, defaults, 'INBOUND')
-        outbound_topics = self.filter_topic_mappings_by_direction(topic_mappings, defaults, 'OUTBOUND')
-        self.logger.info(f"Found {len(inbound_topics)} inbound topics and {len(outbound_topics)} outbound topics")
-        
-        # Log detailed information about inbound topics
-        for i, mapping in enumerate(inbound_topics):
-            self.logger.info(f"Inbound topic {i+1}: {mapping['ott']} -> {mapping['ros_topic']}")
-        
-        # Initialize the topic manager (for ROS2 topics only) - pass full outbound topic mappings, not just strings
+        # Check if fallback was used
+        if self.config.get("config_id") == "default":
+             self.logger.warning("Operational config fetched using fallback mechanism.")
+        else:
+            self.logger.info(f"Loaded operational configuration version: {self.config.get('version')}")
+            self.logger.info(f"Config ID: {self.config.get('config_id')}")
+            self.logger.info(f"Robot ID: {self.config.get('robot_id')}")
+
+            # Log topic mappings
+            topic_mappings = self.config.get('topic_mappings', [])
+            for i, mapping in enumerate(topic_mappings):
+                self.logger.info(f"Topic mapping {i+1}: {json.dumps(mapping)}")
+                self.logger.debug(f"  Keys: {list(mapping.keys())}")
+            
+            # Get defaults
+            defaults = self.config.get('defaults', {})
+            self.logger.info(f"Default values: {json.dumps(defaults)}")
+            
+            # Extract topic lists for logging
+            ros2_topics = [m.get('ros_topic') for m in topic_mappings]
+            ott_topics = [m.get('ott') for m in topic_mappings]
+            self.logger.info(f"Found {len(ros2_topics)} ROS2 topics and {len(ott_topics)} Open-Teleop topics")
+            
+            # Filter topic mappings by direction
+            inbound_topics = self.filter_topic_mappings_by_direction(topic_mappings, defaults, 'INBOUND')
+            outbound_topics = self.filter_topic_mappings_by_direction(topic_mappings, defaults, 'OUTBOUND')
+            self.logger.info(f"Found {len(inbound_topics)} inbound topics and {len(outbound_topics)} outbound topics")
+            
+            # Log detailed information about inbound topics
+            for i, mapping in enumerate(inbound_topics):
+                self.logger.info(f"Inbound topic {i+1}: {mapping['ott']} -> {mapping['ros_topic']}")
+
+        # Initialize the topic manager (for ROS2 topics only) - pass full outbound topic mappings
         self.topic_manager = TopicManager(
             node=self, 
-            topic_mappings=outbound_topics,
-            defaults=defaults,
+            topic_mappings=outbound_topics if self.config.get("config_id") != "default" else [], # Use empty list if fallback
+            defaults=self.config.get('defaults', {}),
             message_converter=self.converter,
             zmq_client=self.zmq_client,
             logger=self.logger
@@ -127,8 +166,8 @@ class RosGateway(Node):
         # Initialize the topic publisher for incoming commands
         self.topic_publisher = TopicPublisher(
             node=self,
-            topic_mappings=inbound_topics,
-            defaults=defaults,
+            topic_mappings=inbound_topics if self.config.get("config_id") != "default" else [], # Use empty list if fallback
+            defaults=self.config.get('defaults', {}),
             message_converter=self.converter,
             zmq_client=self.zmq_client,
             logger=self.logger
@@ -141,18 +180,36 @@ class RosGateway(Node):
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
         
-        self.logger.info('ROS Gateway is ready')
+        self.logger.info('ROS Gateway components initialized')
     
     def _configure_logging(self):
-        """Configure the logger based on the configuration file."""
+        """Configure the logger based on the bootstrap configuration file."""
         try:
-            # We already have the basic logger set up, but we might want to update it
-            # based on the configuration. For simplicity, we'll just keep the current logger.
-            pass
-            
+            log_config = self.bootstrap_config.get('gateway', {}).get('logging', {})
+            log_level_str = os.environ.get('TELEOP_LOG_LEVEL') or log_config.get('level', 'INFO')
+            log_to_file = os.environ.get('TELEOP_LOG_TO_FILE') 
+            if log_to_file is None:
+                log_to_file = log_config.get('log_to_file', False)
+            else:
+                log_to_file = log_to_file.lower() in ['true', '1', 'yes']
+                
+            log_path = os.environ.get('TELEOP_LOG_PATH') or log_config.get('log_path', '/tmp/open_teleop_logs') # Default to /tmp if not set
+            log_rotation = int(os.environ.get('TELEOP_LOG_ROTATION_DAYS') or log_config.get('log_rotation_days', 7))
+
+            # Map string level to logging level constant
+            log_level = getattr(log, log_level_str.upper(), log.INFO)
+
+            # Reconfigure the logger by getting a new instance with updated settings
+            self.logger = log.get_logger(
+                name=self.logger.name, # Keep the original name
+                log_dir=log_path if log_to_file else None,
+                console_level=log_level,
+                file_level=log_level if log_to_file else None
+            )
+            self.logger.info(f"Logger reconfigured: Level={log_level_str}, FileOutput={log_to_file}, Path={log_path if log_to_file else 'N/A'}")
+
         except Exception as e:
-            # Fall back to original logger for error reporting
-            self.logger.error(f"Error configuring logger: {e}")
+            self.logger.error(f"Error configuring logger from bootstrap config: {e}. Using initial basic logger.")
     
     def heartbeat_callback(self):
         """Periodic heartbeat to monitor system status"""
@@ -287,26 +344,38 @@ class RosGateway(Node):
 
 
 def main(args=None):
-    """Main entry point"""
     rclpy.init(args=args)
     
-    gateway = RosGateway()
+    parser = argparse.ArgumentParser(description='ROS Gateway for Open-Teleop')
+    parser.add_argument('--config-path', type=str, required=True, 
+                        help='Path to the gateway bootstrap configuration file (YAML)')
     
-    # Use a MultiThreadedExecutor to handle incoming data
-    from rclpy.executors import MultiThreadedExecutor
-    executor = MultiThreadedExecutor()
-    executor.add_node(gateway)
+    # Parse only known arguments, allowing ROS arguments to pass through
+    parsed_args, remaining_args = parser.parse_known_args()
     
-    executor_thread = Thread(target=executor.spin, daemon=True)
-    executor_thread.start()
-    
+    # Check if config file exists before trying to init node
+    if not os.path.exists(parsed_args.config_path):
+        # Use a temporary basic logger for this initial error message
+        temp_logger = log.get_logger('ros_gateway_init', log.ERROR)
+        temp_logger.fatal(f"Bootstrap configuration file not found: {parsed_args.config_path}")
+        sys.exit(1)
+        
     try:
-        # This keeps the main thread alive
-        executor_thread.join()
+        gateway_node = RosGateway(config_path=parsed_args.config_path)
+        rclpy.spin(gateway_node)
     except KeyboardInterrupt:
-        pass
+        pass # Handled by signal handler
+    except Exception as e:
+        # Log fatal error before exiting
+        if 'gateway_node' in locals() and hasattr(gateway_node, 'logger'):
+            gateway_node.logger.fatal(f"Fatal error during gateway execution: {e}")
+        else:
+            # Use temporary logger if node logger isn't available - explicitly disable file logging
+            temp_logger = log.get_logger(name='ros_gateway_init_error', console_level=log.ERROR, file_level=None)
+            temp_logger.fatal(f"Fatal error during gateway initialization: {e}")
     finally:
-        gateway.shutdown()
+        if 'gateway_node' in locals():
+            gateway_node.shutdown()
         rclpy.shutdown()
 
 

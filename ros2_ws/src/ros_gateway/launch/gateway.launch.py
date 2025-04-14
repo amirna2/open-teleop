@@ -26,7 +26,13 @@ def generate_launch_description():
     
     # Create the gateway node using Python module directly
     gateway_process = ExecuteProcess(
-        cmd=['python3', '-m', 'ros_gateway.gateway_node'],
+        cmd=[
+            'python3', 
+            '-m', 
+            'ros_gateway.gateway_node', 
+            '--config-path', 
+            LaunchConfiguration('config_path')
+        ],
         name='ros_gateway',
         output='screen',
     )
