@@ -79,7 +79,7 @@ type MessageReceiver struct {
 }
 
 // newMessageReceiver creates a new MessageReceiver
-func newMessageReceiver(ctx *zmq4.Context, cfg *config.Config, dispatcher *MessageDispatcher, logger customlog.Logger, wg *sync.WaitGroup) (*MessageReceiver, error) {
+func newMessageReceiver(ctx *zmq4.Context, bindAddress string, dispatcher *MessageDispatcher, logger customlog.Logger, wg *sync.WaitGroup) (*MessageReceiver, error) {
 	// Create REP socket for receiving requests
 	socket, err := ctx.NewSocket(zmq4.Type(zmq4.REP))
 	if err != nil {
@@ -87,9 +87,9 @@ func newMessageReceiver(ctx *zmq4.Context, cfg *config.Config, dispatcher *Messa
 	}
 
 	// Bind to the address from config
-	if err := socket.Bind(cfg.ZeroMQ.ControllerAddress); err != nil {
+	if err := socket.Bind(bindAddress); err != nil {
 		socket.Close()
-		return nil, fmt.Errorf("failed to bind to %s: %w", cfg.ZeroMQ.ControllerAddress, err)
+		return nil, fmt.Errorf("failed to bind to %s: %w", bindAddress, err)
 	}
 
 	// Configure socket options
@@ -113,7 +113,7 @@ func newMessageReceiver(ctx *zmq4.Context, cfg *config.Config, dispatcher *Messa
 	poller := zmq4.NewPoller()
 	poller.Add(socket, zmq4.State(zmq4.POLLIN))
 
-	logger.Infof("MessageReceiver initialized on %s", cfg.ZeroMQ.ControllerAddress)
+	logger.Infof("MessageReceiver initialized on %s", bindAddress)
 
 	return &MessageReceiver{
 		socket:     socket,
@@ -235,7 +235,7 @@ type MessageSender struct {
 }
 
 // newMessageSender creates a new MessageSender
-func newMessageSender(ctx *zmq4.Context, cfg *config.Config, logger customlog.Logger) (*MessageSender, error) {
+func newMessageSender(ctx *zmq4.Context, bindAddress string, logger customlog.Logger) (*MessageSender, error) {
 	// Create PUB socket for publishing messages
 	socket, err := ctx.NewSocket(zmq4.Type(zmq4.PUB))
 	if err != nil {
@@ -243,10 +243,9 @@ func newMessageSender(ctx *zmq4.Context, cfg *config.Config, logger customlog.Lo
 	}
 
 	// Bind to the address from config
-	pubAddress := cfg.ZeroMQ.GatewayAddress
-	if err := socket.Bind(pubAddress); err != nil {
+	if err := socket.Bind(bindAddress); err != nil {
 		socket.Close()
-		return nil, fmt.Errorf("failed to bind to %s: %w", pubAddress, err)
+		return nil, fmt.Errorf("failed to bind to %s: %w", bindAddress, err)
 	}
 
 	// Configure socket options
@@ -255,13 +254,19 @@ func newMessageSender(ctx *zmq4.Context, cfg *config.Config, logger customlog.Lo
 		return nil, fmt.Errorf("failed to set linger option: %w", err)
 	}
 
-	logger.Infof("MessageSender initialized on %s", pubAddress)
+	// Set send timeout for the publisher
+	const socketTimeout = 1 * time.Second
+	if err := socket.SetSndtimeo(socketTimeout); err != nil {
+		socket.Close()
+		return nil, fmt.Errorf("failed to set send timeout for PUB socket: %w", err)
+	}
+
+	logger.Infof("MessageSender initialized on %s", bindAddress)
 
 	return &MessageSender{
 		socket:  socket,
 		logger:  logger,
-		running: true,
-		mu:      sync.Mutex{},
+		running: true, // Assume running on creation for sender
 	}, nil
 }
 
@@ -503,37 +508,39 @@ type ZeroMQService struct {
 	wg         *sync.WaitGroup
 }
 
-// NewZeroMQService creates a new ZeroMQ service
-func NewZeroMQService(cfg *config.Config, logger customlog.Logger) (*ZeroMQService, error) {
+// NewZeroMQService creates a new ZeroMQService
+// Accepts specific bind addresses from bootstrap config and the operational zeromq config.
+func NewZeroMQService(requestBindAddr string, publishBindAddr string, operationalCfg config.ZeroMQConfig, logger customlog.Logger) (*ZeroMQService, error) {
 	// Create ZeroMQ context
 	ctx, err := zmq4.NewContext()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create ZMQ context: %w", err)
+		return nil, fmt.Errorf("failed to create ZeroMQ context: %w", err)
 	}
 
-	// Create components
-	dispatcher := NewMessageDispatcher(logger)
-
-	// Set up wait group for clean shutdown
 	var wg sync.WaitGroup
 
-	// Create receiver
-	receiver, err := newMessageReceiver(ctx, cfg, dispatcher, logger, &wg)
+	// Create dispatcher
+	dispatcher := NewMessageDispatcher(logger)
+
+	// Create message receiver
+	receiver, err := newMessageReceiver(ctx, requestBindAddr, dispatcher, logger, &wg) // Pass requestBindAddr
 	if err != nil {
 		ctx.Term()
-		return nil, err
+		return nil, fmt.Errorf("failed to create message receiver: %w", err)
 	}
 
-	// Create sender
-	sender, err := newMessageSender(ctx, cfg, logger)
+	// Create message sender
+	sender, err := newMessageSender(ctx, publishBindAddr, logger) // Pass publishBindAddr
 	if err != nil {
 		receiver.Close()
 		ctx.Term()
-		return nil, err
+		return nil, fmt.Errorf("failed to create message sender: %w", err)
 	}
 
+	logger.Infof("ZeroMQService initialized")
+
 	return &ZeroMQService{
-		config:     cfg,
+		// config:     cfg, // No longer need the full operational config here directly
 		ctx:        ctx,
 		receiver:   receiver,
 		sender:     sender,

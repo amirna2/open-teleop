@@ -73,15 +73,10 @@ func NewMessageDirector(
 	}
 }
 
-// Initialize creates the processing pools based on configuration
-func (d *MessageDirector) Initialize(cfg *config.Config) {
+// Initialize creates the processing pools based on the provided worker counts
+func (d *MessageDirector) Initialize(highWorkers, standardWorkers, lowWorkers int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-
-	// Get worker counts from config
-	highWorkers := cfg.Controller.Processing.HighPriorityWorkers
-	standardWorkers := cfg.Controller.Processing.StandardPriorityWorkers
-	lowWorkers := cfg.Controller.Processing.LowPriorityWorkers
 
 	// Create processing pools
 	d.highPriorityPool = NewProcessingPool(

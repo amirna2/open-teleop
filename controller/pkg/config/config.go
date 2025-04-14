@@ -4,9 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"path/filepath"
 	"strconv"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -27,8 +25,8 @@ type Config struct {
 
 // ControllerConfig represents controller-specific configuration
 type ControllerConfig struct {
-	Server     ServerConfig     `yaml:"server" json:"server"`
-	Processing ProcessingConfig `yaml:"processing" json:"processing"`
+	Server ServerConfig `yaml:"server" json:"server"`
+	// Processing ProcessingConfig `yaml:"processing" json:"processing"` // Moved to BootstrapConfig
 }
 
 // ZeroMQConfig holds ZeroMQ-specific configuration
@@ -46,13 +44,6 @@ type ServerConfig struct {
 	Port           int `yaml:"port" json:"port"`
 	RequestTimeout int `yaml:"request_timeout" json:"request_timeout"`
 	MaxRequestSize int `yaml:"max_request_size" json:"max_request_size"`
-}
-
-// ProcessingConfig holds message processing configuration
-type ProcessingConfig struct {
-	HighPriorityWorkers     int `yaml:"high_priority_workers" json:"high_priority_workers"`
-	StandardPriorityWorkers int `yaml:"standard_priority_workers" json:"standard_priority_workers"`
-	LowPriorityWorkers      int `yaml:"low_priority_workers" json:"low_priority_workers"`
 }
 
 // TopicMapping represents a mapping between ROS topics and Open-Teleop topics
@@ -95,48 +86,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	// Apply environment variable overrides
-	applyEnvironmentOverrides(&config)
+	ApplyEnvironmentOverrides(&config)
 
 	return &config, nil
-}
-
-// LoadConfigWithEnv loads configuration based on the environment
-// Options are: development, testing, production
-func LoadConfigWithEnv(configDir string, environment string) (*Config, error) {
-	// Load the unified configuration
-	unifiedConfigPath := filepath.Join(configDir, "open_teleop_config.yaml")
-	if _, err := os.Stat(unifiedConfigPath); err != nil {
-		return nil, fmt.Errorf("unified config file not found at %s: %w", unifiedConfigPath, err)
-	}
-
-	config, err := LoadConfig(unifiedConfigPath)
-	if err != nil {
-		return nil, fmt.Errorf("error loading unified config: %w", err)
-	}
-
-	// Set environment if specified
-	if environment != "" {
-		config.Environment = environment
-	} else if config.Environment == "" {
-		// Check environment variable
-		config.Environment = os.Getenv("TELEOP_ENVIRONMENT")
-		if config.Environment == "" {
-			config.Environment = "development"
-		}
-	}
-
-	// Normalize environment name
-	config.Environment = strings.ToLower(config.Environment)
-
-	// Validate environment
-	switch config.Environment {
-	case "development", "testing", "production":
-		// Valid environment
-	default:
-		return nil, fmt.Errorf("invalid environment: %s", config.Environment)
-	}
-
-	return config, nil
 }
 
 // GetTopicMappingsByDirection returns topic mappings filtered by direction
@@ -192,9 +144,10 @@ func applyDefaults(mapping TopicMapping, defaults DefaultsConfig) TopicMapping {
 	return result
 }
 
-// applyEnvironmentOverrides applies environment variable overrides to the configuration
-func applyEnvironmentOverrides(config *Config) {
-	// ZeroMQ overrides
+// ApplyEnvironmentOverrides applies environment variable overrides to the configuration
+// Exported function to be called manually after loading config.
+func ApplyEnvironmentOverrides(config *Config) {
+	// ZeroMQ overrides (These apply to the operational config struct)
 	if addr := os.Getenv("TELEOP_ZMQ_CONTROLLER_ADDRESS"); addr != "" {
 		config.ZeroMQ.ControllerAddress = addr
 	}
@@ -239,25 +192,6 @@ func applyEnvironmentOverrides(config *Config) {
 	if maxSize := os.Getenv("TELEOP_SERVER_MAX_REQUEST_SIZE"); maxSize != "" {
 		if size, err := strconv.Atoi(maxSize); err == nil {
 			config.Controller.Server.MaxRequestSize = size
-		}
-	}
-
-	// Processing overrides
-	if workers := os.Getenv("TELEOP_HIGH_PRIORITY_WORKERS"); workers != "" {
-		if count, err := strconv.Atoi(workers); err == nil {
-			config.Controller.Processing.HighPriorityWorkers = count
-		}
-	}
-
-	if workers := os.Getenv("TELEOP_STANDARD_PRIORITY_WORKERS"); workers != "" {
-		if count, err := strconv.Atoi(workers); err == nil {
-			config.Controller.Processing.StandardPriorityWorkers = count
-		}
-	}
-
-	if workers := os.Getenv("TELEOP_LOW_PRIORITY_WORKERS"); workers != "" {
-		if count, err := strconv.Atoi(workers); err == nil {
-			config.Controller.Processing.LowPriorityWorkers = count
 		}
 	}
 

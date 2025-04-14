@@ -1,13 +1,12 @@
 # config/controller-config.yaml
 # Bootstrap configuration for the Open-Teleop Controller
 
-version: "1.0" # Schema version for this config file
-
 logging:
   level: "INFO" # Options: DEBUG, INFO, WARN, ERROR
   
 server:
-  http_port: 8080 # Port for the controller's internal HTTP server (e.g., for admin API / healthchecks)
+  # Port for the controller's internal HTTP server (e.g., for admin API / healthchecks)
+  http_port: 8080 
 
 zeromq:
   # Address the controller binds to for receiving requests (e.g., from gateway)
@@ -20,10 +19,15 @@ zeromq:
   reconnect_interval_ms: 1000
 
 data:
-  # Directory inside the container where fetched/managed teleop configs are stored
-  directory: "/teleop_data" # Mounted volume
+  # Directory (mounted volume) inside the container where fetched/managed teleop configs are stored
+  directory: "/teleop_data"
   # Name of the teleop config file
   teleop_config_file: "open_teleop_config.yaml"
+
+processing:
+  high_priority_workers: 4
+  standard_priority_workers: 2
+  low_priority_workers: 1
 
 # Optional: Add any other controller-specific operational settings here
 # e.g., processing queue sizes if not derived from teleop config

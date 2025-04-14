@@ -3,7 +3,6 @@ version: "1.0"
 config_id: "unified-config-2025-03-17"
 lastUpdated: "2025-03-17T00:00:00Z"
 robot_id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
-environment: "development"
 
 # Controller-specific settings
 controller:
@@ -12,11 +11,6 @@ controller:
     request_timeout: 30
     max_request_size: 10
   
-  processing:
-    high_priority_workers: 4
-    standard_priority_workers: 2
-    low_priority_workers: 1
-
 # ZeroMQ communication settings
 zeromq:
   # Controller binds to this address to receive messages from gateways

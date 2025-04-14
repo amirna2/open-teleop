@@ -100,10 +100,6 @@ throttle_rates:
 		t.Errorf("Expected port 8080, got %d", config.Controller.Server.Port)
 	}
 
-	if config.Controller.Processing.HighPriorityWorkers != 4 {
-		t.Errorf("Expected high_priority_workers 4, got %d", config.Controller.Processing.HighPriorityWorkers)
-	}
-
 	// Verify ZeroMQ config
 	if config.ZeroMQ.ControllerAddress != "tcp://*:5555" {
 		t.Errorf("Expected controller_address tcp://*:5555, got %s", config.ZeroMQ.ControllerAddress)
@@ -192,12 +188,10 @@ throttle_rates:
 	// Set environment variables
 	os.Setenv("TELEOP_ZMQ_CONTROLLER_ADDRESS", "tcp://*:5559")
 	os.Setenv("TELEOP_SERVER_PORT", "9090")
-	os.Setenv("TELEOP_HIGH_PRIORITY_WORKERS", "8")
 	os.Setenv("TELEOP_THROTTLE_LOW_HZ", "5")
 	defer func() {
 		os.Unsetenv("TELEOP_ZMQ_CONTROLLER_ADDRESS")
 		os.Unsetenv("TELEOP_SERVER_PORT")
-		os.Unsetenv("TELEOP_HIGH_PRIORITY_WORKERS")
 		os.Unsetenv("TELEOP_THROTTLE_LOW_HZ")
 	}()
 
@@ -216,120 +210,8 @@ throttle_rates:
 		t.Errorf("Environment override failed. Expected port 9090, got %d", config.Controller.Server.Port)
 	}
 
-	if config.Controller.Processing.HighPriorityWorkers != 8 {
-		t.Errorf("Environment override failed. Expected high_priority_workers 8, got %d", config.Controller.Processing.HighPriorityWorkers)
-	}
-
 	if config.ThrottleRates.LowHz != 5 {
 		t.Errorf("Environment override failed. Expected low_hz 5, got %d", config.ThrottleRates.LowHz)
-	}
-}
-
-func TestLoadConfigWithEnv(t *testing.T) {
-	// Create a temporary test directory
-	tempDir, err := ioutil.TempDir("", "config-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Create unified config
-	unifiedConfigContent := `
-version: "1.0"
-config_id: "unified-config"
-lastUpdated: "2025-03-17T00:00:00Z"
-robot_id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
-
-controller:
-  server:
-    port: 8080
-    request_timeout: 30
-    max_request_size: 10
-  
-  processing:
-    high_priority_workers: 4
-    standard_priority_workers: 2
-    low_priority_workers: 1
-
-zeromq:
-  controller_address: "tcp://*:5555"
-  gateway_address: "tcp://*:5556"
-  gateway_connect_address: "tcp://localhost:5555"
-  gateway_subscribe_address: "tcp://localhost:5556"
-  message_buffer_size: 1000
-  reconnect_interval_ms: 1000
-
-topic_mappings:
-  - ros_topic: "/battery_state"
-    ott: "teleop.sensor.battery"
-    priority: "STANDARD"
-    message_type: "sensor_msgs/msg/BatteryState"
-    direction: "OUTBOUND"
-    source_type: "ROS2_CDR"
-  
-  - ros_topic: "/cmd_vel"
-    ott: "teleop.control.velocity"
-    priority: "HIGH"
-    message_type: "geometry_msgs/msg/Twist"
-    direction: "INBOUND"
-    source_type: "ROS2_CDR"
-    
-  - ott: "teleop.diagnostic.system_metrics"
-    priority: "LOW"
-    source_type: "OPEN_TELEOP"
-    direction: "OUTBOUND"
-
-defaults:
-  priority: "STANDARD"
-  direction: "OUTBOUND"
-  source_type: "ROS2_CDR"
-
-throttle_rates:
-  high_hz: 0
-  standard_hz: 10
-  low_hz: 1
-`
-
-	// Write unified config file
-	unifiedConfigPath := filepath.Join(tempDir, "open_teleop_config.yaml")
-	if err := ioutil.WriteFile(unifiedConfigPath, []byte(unifiedConfigContent), 0644); err != nil {
-		t.Fatalf("Failed to write unified config: %v", err)
-	}
-
-	// Test loading config with default environment
-	config, err := LoadConfigWithEnv(tempDir, "")
-	if err != nil {
-		t.Fatalf("LoadConfigWithEnv failed: %v", err)
-	}
-
-	// Verify that unified config was loaded
-	if config.ConfigID != "unified-config" {
-		t.Errorf("Expected unified config to be loaded, got config_id %s", config.ConfigID)
-	}
-
-	if config.Environment != "development" {
-		t.Errorf("Expected default environment development, got %s", config.Environment)
-	}
-
-	// Test loading with explicit environment
-	config, err = LoadConfigWithEnv(tempDir, "production")
-	if err != nil {
-		t.Fatalf("LoadConfigWithEnv failed: %v", err)
-	}
-
-	// Verify that environment is set correctly
-	if config.Environment != "production" {
-		t.Errorf("Expected environment to be set to production, got %s", config.Environment)
-	}
-
-	// Test with missing config file
-	if err := os.Remove(unifiedConfigPath); err != nil {
-		t.Fatalf("Failed to remove unified config: %v", err)
-	}
-
-	_, err = LoadConfigWithEnv(tempDir, "development")
-	if err == nil {
-		t.Errorf("Expected error when config file is missing, got nil")
 	}
 }
 
