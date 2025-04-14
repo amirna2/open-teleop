@@ -42,13 +42,13 @@ RUN wget "https://golang.org/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.t
     # --- End ownership change ---
 
 # Set working directory for subsequent commands
-WORKDIR /open-teleop_ws
+WORKDIR /open_teleop
 
 # Copy the entire project context
 COPY . .
 
 # Copy the CycloneDDS configuration file
-COPY ros2_ws/src/ros_gateway/config/cyclonedds.xml /open-teleop_ws/ros2_ws/src/ros_gateway/config/cyclonedds.xml
+COPY ros2_ws/src/ros_gateway/config/cyclonedds.xml /open_teleop/ros2_ws/src/ros_gateway/config/cyclonedds.xml
 
 # Make scripts executable (including entrypoint)
 # Run this before USER switch to avoid needing sudo
@@ -56,7 +56,7 @@ RUN chmod +x ./scripts/*.sh \
     && chmod +x ./scripts/entrypoint.sh
 
 # --- Set ownership of copied files ---
-RUN chown -R teleop:teleop /open-teleop_ws
+RUN chown -R teleop:teleop /open_teleop
 
 # --- Build the project BEFORE switching user ---
 # Run the build script as root, as it might need permissions for colcon etc.
@@ -67,7 +67,7 @@ RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && ./scripts/build.sh all"
 USER teleop:teleop
 
 # --- Set Entrypoint ---
-ENTRYPOINT ["/open-teleop_ws/scripts/entrypoint.sh"]
+ENTRYPOINT ["/open_teleop/scripts/entrypoint.sh"]
 
 # CMD can be removed or left empty as ENTRYPOINT is used
 # CMD []
