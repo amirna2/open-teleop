@@ -158,7 +158,7 @@ docker-compose up
 # From the project root directory
 cd ros2_ws
 source install/setup.bash
-ros2 launch launch/all_bridges.launch.py
+ros2 launch ros_gateway gateway.launch.py
 ```
 
 **Terminal 2 (Go Controller)**:
@@ -204,8 +204,7 @@ cd tests
 
 ### Code Organization
 
-- Follow the project structure outlined in [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)
-- Keep ROS2 code in the `ros2_ws/src` directory
+- Follow standard ROS2 package structure in `ros2_ws/src` directory
 - Keep Go code in the `controller` directory
 
 ### Contribution Workflow

@@ -24,10 +24,8 @@ RUN . /opt/ros/jazzy/setup.sh && \
     colcon build --symlink-install
 
 # Set up entry point
-COPY ./launch/all_bridges.launch.py /ros2_ws/launch/
-RUN chmod +x /ros2_ws/launch/all_bridges.launch.py
 
 # Source ROS environment and launch nodes
 CMD ["bash", "-c", "source /opt/ros/jazzy/setup.bash && \
                     source /ros2_ws/install/setup.bash && \
-                    ros2 launch all_bridges.launch.py"] 
+                    ros2 launch ros_gateway gateway.launch.py"] 
