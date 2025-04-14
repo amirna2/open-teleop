@@ -83,7 +83,6 @@ MISSING_PACKAGES=()
 ROS_PACKAGES=(
     "ros-jazzy-cv-bridge"
     "ros-jazzy-image-transport"
-    "ros-jazzy-audio-common"
     "ros-jazzy-navigation2"
     "ros-jazzy-nav2-bringup"
 )
