@@ -9,8 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings" // Added for environment normalization
+	"path/filepath" // Added for environment normalization
 	"syscall"
 	"time"
 
@@ -32,9 +31,7 @@ import (
 
 func main() {
 	// Parse command line flags for initial setup
-	environmentFlag := flag.String("env", "", "Environment (development, testing, production)")
 	configDir := flag.String("config-dir", "./config", "Path to configuration directory containing controller_config.yaml")
-	logLevelFlag := flag.String("log-level", "", "Logging level (debug, info, warn, error, fatal) - overrides bootstrap config if set")
 	flag.Parse()
 
 	// --- Find executable directory for relative paths ---
@@ -81,22 +78,15 @@ func main() {
 	}
 
 	// --- Initialize Custom Logger ---
-	// Determine final log level (Flag > Bootstrap Config)
+	// Determine final log level (Bootstrap Config ONLY)
 	finalLogLevel := bootstrapCfg.Logging.Level
-	if *logLevelFlag != "" {
-		finalLogLevel = *logLevelFlag
-		stdlog.Printf("Overriding bootstrap log level with command-line flag: %s", finalLogLevel)
-	}
 
-	// Determine final log path (Environment > Bootstrap Config > Default empty string)
-	finalLogPath := os.Getenv("CONTROLLER_LOG_PATH") // Check environment variable first
+	// Determine final log path (Bootstrap Config ONLY)
+	finalLogPath := bootstrapCfg.Logging.LogPath // Get path from bootstrap config value
 	if finalLogPath == "" {
-		finalLogPath = bootstrapCfg.Logging.LogPath // Fallback to bootstrap config value
-	}
-	if finalLogPath == "" {
-		stdlog.Printf("Log path not specified via CONTROLLER_LOG_PATH or bootstrap config. Disabling file logging.")
+		stdlog.Printf("Log path not specified in bootstrap config. Disabling file logging.")
 	} else {
-		stdlog.Printf("Using log directory: %s (from CONTROLLER_LOG_PATH or bootstrap config)", finalLogPath)
+		stdlog.Printf("Using log directory: %s (from bootstrap config)", finalLogPath)
 	}
 
 	// Initialize logger with determined level and path
@@ -116,38 +106,8 @@ func main() {
 		logger.Fatalf("Failed to load operational configuration: %v", err)
 	}
 
-	// --- Handle Environment ---
-	// Use command-line flag if provided, otherwise use config value, else default
-	finalEnvironment := cfg.Environment // Environment from operational config file
-	if *environmentFlag != "" {
-		finalEnvironment = *environmentFlag
-		logger.Infof("Overriding operational config environment ('%s') with command-line flag: '%s'", cfg.Environment, finalEnvironment)
-	}
-	if finalEnvironment == "" {
-		finalEnvironment = os.Getenv("TELEOP_ENVIRONMENT")
-		if finalEnvironment == "" {
-			finalEnvironment = "development"
-			logger.Infof("No environment specified via flag, config, or TELEOP_ENVIRONMENT var. Defaulting to '%s'", finalEnvironment)
-		} else {
-			logger.Infof("Using environment from TELEOP_ENVIRONMENT var: '%s'", finalEnvironment)
-		}
-	} else {
-		logger.Infof("Using environment from config file or flag: '%s'", finalEnvironment)
-	}
-	cfg.Environment = strings.ToLower(finalEnvironment)
-	switch cfg.Environment {
-	case "development", "testing", "production":
-		// Valid environment
-	default:
-		logger.Fatalf("Invalid environment specified: %s", cfg.Environment)
-	}
-
-	// --- Apply Environment Overrides to Operational Config ---
-	config.ApplyEnvironmentOverrides(cfg)
-	logger.Debugf("Applied environment variable overrides to operational config.")
-
 	// Log the configuration details (using operational config 'cfg')
-	logger.Infof("Loaded operational configuration for environment: %s", cfg.Environment)
+	logger.Infof("Loaded operational configuration")
 	logger.Infof("Operational Config ID: %s, Version: %s", cfg.ConfigID, cfg.Version)
 	logger.Infof("Robot ID: %s", cfg.RobotID)
 
@@ -247,11 +207,10 @@ func main() {
 	// --- Set up basic routes (uses operational config 'cfg') ---
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"status":      "online",
-			"version":     cfg.Version, // Operational config version
-			"environment": cfg.Environment,
-			"config_id":   cfg.ConfigID, // Operational config ID
-			"robot_id":    cfg.RobotID,
+			"status":    "online",
+			"version":   cfg.Version,  // Operational config version
+			"config_id": cfg.ConfigID, // Operational config ID
+			"robot_id":  cfg.RobotID,
 		})
 	})
 
@@ -266,7 +225,6 @@ func main() {
 			"config_id":      cfg.ConfigID,
 			"version":        cfg.Version,
 			"last_updated":   cfg.LastUpdated,
-			"environment":    cfg.Environment,
 			"robot_id":       cfg.RobotID,
 			"topic_count":    len(cfg.TopicMappings),
 			"inbound_count":  len(inboundTopics),

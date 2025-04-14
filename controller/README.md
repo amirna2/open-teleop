@@ -4,43 +4,36 @@ The controller component of the Open-Teleop platform. It serves as the central m
 
 ## Configuration
 
-The controller uses a unified YAML-based configuration system that's shared with other components:
+The controller uses two primary YAML configuration files located in the directory specified by the `--config-dir` flag (defaults to `./config` relative to the project root or executable location).
 
-### Configuration File
+### Bootstrap Configuration
 
-- `config/open_teleop_config.yaml`: Unified configuration file for all components
+- **`controller_config.yaml`**: Defines essential settings needed for the controller to start up.
+  - **`logging.level`**: Sets the logging verbosity (e.g., "DEBUG", "INFO", "WARN", "ERROR").
+  - **`logging.log_path`**: Specifies the directory for log files. If empty or omitted, file logging is disabled.
+  - **`server.http_port`**: The port for the internal HTTP server.
+  - **`zeromq.request_bind_address`**: Address the controller binds to for receiving gateway requests.
+  - **`zeromq.publish_bind_address`**: Address the controller binds to for publishing messages to gateways.
+  - **`processing.*_workers`**: Number of worker goroutines for different priority levels.
+  - **`data.directory`**: Directory where operational configuration files are stored/managed.
+  - **`data.teleop_config_file`**: The filename of the main operational configuration file within the data directory.
 
-### Environment Variables
+### Operational Configuration
 
-All configuration values can be overridden using environment variables:
+- **`<value of data.teleop_config_file>`** (e.g., `open_teleop_config.yaml`): Defines the teleoperation session specifics, such as topic mappings, robot ID, etc.
+  - **`Environment`**: Specifies the operational environment ("development", "testing", "production"). This can be overridden by the `--env` command-line flag.
+  - This configuration file has its own environment variable override mechanism. Refer to `pkg/config/config.go` and `ApplyEnvironmentOverrides` for details.
 
-| Environment Variable | Configuration Setting |
-| --- | --- |
-| `TELEOP_ENVIRONMENT` | Sets the environment (development, testing, production) |
-| `TELEOP_ZMQ_CONTROLLER_ADDRESS` | ZeroMQ controller address |
-| `TELEOP_ZMQ_GATEWAY_ADDRESS` | ZeroMQ gateway address |
-| `TELEOP_ZMQ_GATEWAY_CONNECT_ADDRESS` | Address for gateways to connect to controller |
-| `TELEOP_ZMQ_GATEWAY_SUBSCRIBE_ADDRESS` | Address for gateways to subscribe to controller |
-| `TELEOP_ZMQ_BUFFER_SIZE` | ZeroMQ message buffer size |
-| `TELEOP_ZMQ_RECONNECT_INTERVAL_MS` | ZeroMQ reconnect interval in milliseconds |
-| `TELEOP_SERVER_PORT` | HTTP server port |
-| `TELEOP_SERVER_REQUEST_TIMEOUT` | HTTP request timeout in seconds |
-| `TELEOP_SERVER_MAX_REQUEST_SIZE` | Maximum HTTP request size in MB |
-| `TELEOP_HIGH_PRIORITY_WORKERS` | Number of high priority worker goroutines |
-| `TELEOP_STANDARD_PRIORITY_WORKERS` | Number of standard priority worker goroutines |
-| `TELEOP_LOW_PRIORITY_WORKERS` | Number of low priority worker goroutines |
-| `TELEOP_THROTTLE_HIGH_HZ` | Throttle rate for high priority messages (0 = no throttling) |
-| `TELEOP_THROTTLE_STANDARD_HZ` | Throttle rate for standard priority messages |
-| `TELEOP_THROTTLE_LOW_HZ` | Throttle rate for low priority messages |
+### Command-Line Flags
+
+- **`--config-dir <path>`**: Specifies the directory containing `controller_config.yaml` and the operational config file. Defaults to `./config`.
 
 ## Running the Controller
 
 ### Using the Run Script
 
-The simplest way to run the controller is to use the provided script:
-
 ```bash
-# Run with development environment (default)
+# Run with development environment (default behavior depends on script)
 ./scripts/run_controller.sh
 
 # Run with testing environment
@@ -52,19 +45,18 @@ The simplest way to run the controller is to use the provided script:
 
 ### Manual Execution
 
-You can also run the controller manually:
-
 ```bash
 # Build the controller
 ./scripts/build.sh controller
 
-# Run with specific environment and config directory
-./controller/bin/controller -env development -config-dir ./config
+# Run with specific config directory
+# (Ensure controller_config.yaml and open_teleop_config.yaml are in ./config)
+./controller/bin/controller --config-dir ./config
 ```
 
 ## ZeroMQ Communication
 
-The controller uses ZeroMQ for message-based communication with gateways:
+The controller uses ZeroMQ for message-based communication with gateways. Addresses for binding are specified in `controller_config.yaml`, while addresses for connecting to gateways are typically defined in the operational configuration (`open_teleop_config.yaml`).
 
 - **Controller Address**: Binds to this address to receive messages from gateways
 - **Gateway Address**: Binds to this address to publish messages to gateways

@@ -3,8 +3,6 @@ package config
 import (
 	"fmt"
 	"io/ioutil"
-	"os"
-	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -14,7 +12,6 @@ type Config struct {
 	Version       string           `yaml:"version" json:"version"`
 	ConfigID      string           `yaml:"config_id" json:"config_id"`
 	LastUpdated   string           `yaml:"lastUpdated" json:"lastUpdated"`
-	Environment   string           `yaml:"environment" json:"environment"`
 	RobotID       string           `yaml:"robot_id" json:"robot_id"`
 	Controller    ControllerConfig `yaml:"controller" json:"controller"`
 	ZeroMQ        ZeroMQConfig     `yaml:"zeromq" json:"zeromq"`
@@ -85,9 +82,6 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("error parsing config file: %w", err)
 	}
 
-	// Apply environment variable overrides
-	ApplyEnvironmentOverrides(&config)
-
 	return &config, nil
 }
 
@@ -146,6 +140,7 @@ func applyDefaults(mapping TopicMapping, defaults DefaultsConfig) TopicMapping {
 
 // ApplyEnvironmentOverrides applies environment variable overrides to the configuration
 // Exported function to be called manually after loading config.
+/*
 func ApplyEnvironmentOverrides(config *Config) {
 	// ZeroMQ overrides (These apply to the operational config struct)
 	if addr := os.Getenv("TELEOP_ZMQ_CONTROLLER_ADDRESS"); addr != "" {
@@ -214,3 +209,4 @@ func ApplyEnvironmentOverrides(config *Config) {
 		}
 	}
 }
+*/
