@@ -553,7 +553,7 @@ int RosParser_ParseToJson(
     json result_json;
     std::string json_str;
 
-    std::cerr << "[RosParser] INFO: Parsing message type: " << message_type << std::endl;
+    //std::cerr << "[RosParser] INFO: Parsing message type: " << message_type << std::endl;
 
     try {
         MessageTypeSupport introspection_support_wrapper;
@@ -564,7 +564,7 @@ int RosParser_ParseToJson(
             return ROS_PARSER_ERROR_UNSUPPORTED_TYPE;
         }
         introspection_ts = introspection_support_wrapper.type_support;
-        std::cerr << "[RosParser] INFO: Introspection typesupport loaded." << std::endl;
+        //std::cerr << "[RosParser] INFO: Introspection typesupport loaded." << std::endl;
 
         members = static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers*>(introspection_ts->data);
         if (!members) {
@@ -583,22 +583,22 @@ int RosParser_ParseToJson(
             std::string rmw_impl_str(rmw_impl);
             if (rmw_impl_str == "rmw_fastrtps_cpp") {
                 rmw_identifier = "rosidl_typesupport_fastrtps_cpp";
-                std::cerr << "[RosParser] INFO: Using FastRTPS RMW implementation." << std::endl;
+                //std::cerr << "[RosParser] INFO: Using FastRTPS RMW implementation." << std::endl;
             } else if (rmw_impl_str == "rmw_cyclonedds_cpp") {
                 rmw_identifier = "rosidl_typesupport_introspection_cpp";
-                std::cerr << "[RosParser] INFO: Using CycloneDDS RMW implementation." << std::endl;
+                //std::cerr << "[RosParser] INFO: Using CycloneDDS RMW implementation." << std::endl;
             } else {
                 std::cerr << "[RosParser] WARNING: Unknown RMW_IMPLEMENTATION '" << rmw_impl_str 
                           << "', falling back to " << rmw_identifier << std::endl;
             }
         } else {
-            std::cerr << "[RosParser] INFO: RMW_IMPLEMENTATION not set, using " << rmw_identifier << std::endl;
+            //std::cerr << "[RosParser] INFO: RMW_IMPLEMENTATION not set, using " << rmw_identifier << std::endl;
         }
 
         try {
             rmw_library = rosbag2_cpp::get_typesupport_library(message_type, rmw_identifier);
             rmw_ts = rosbag2_cpp::get_typesupport_handle(message_type, rmw_identifier, rmw_library);
-            std::cerr << "[RosParser] INFO: RMW typesupport loaded (" << rmw_identifier << ")." << std::endl;
+            //std::cerr << "[RosParser] INFO: RMW typesupport loaded (" << rmw_identifier << ")." << std::endl;
         } catch (const std::exception& e) {
              std::string err = "Failed to get RMW typesupport ('" + rmw_identifier + "') for " + std::string(message_type) + ": " + e.what();
              if (error_msg) *error_msg = allocate_string(err);
@@ -623,7 +623,7 @@ int RosParser_ParseToJson(
         try {
             rclcpp::SerializationBase serialization_base(rmw_ts);
             serialization_base.deserialize_message(&serialized_msg_view, cpp_message_object);
-             std::cerr << "[RosParser] INFO: Deserialization successful." << std::endl;
+            //std::cerr << "[RosParser] INFO: Deserialization successful." << std::endl;
             if (g_debug_logging_enabled) std::cerr << "rclcpp Deserialization successful using RMW handle for type: " << message_type << std::endl;
         } catch (const std::exception& deserialize_err) {
             std::string err = "rclcpp::SerializationBase::deserialize_message failed: " + std::string(deserialize_err.what());
@@ -641,8 +641,8 @@ int RosParser_ParseToJson(
 
         try {
             json_str = result_json.dump();
-            std::cerr << "[RosParser] INFO: JSON conversion successful (string size: " << json_str.length() << ")." << std::endl;
-            std::cerr << "[RosParser] JSON_RESULT: " << json_str << std::endl;
+            //std::cerr << "[RosParser] INFO: JSON conversion successful (string size: " << json_str.length() << ")." << std::endl;
+            //std::cerr << "[RosParser] JSON_RESULT: " << json_str << std::endl;
         } catch (const json::exception& json_ex) {
             std::string err = "Failed to dump JSON object to string: " + std::string(json_ex.what());
             if (error_msg) *error_msg = allocate_string(err);
@@ -661,7 +661,7 @@ int RosParser_ParseToJson(
         members->fini_function(cpp_message_object);
         free(cpp_message_object);
         cpp_message_object = nullptr;
-        std::cerr << "[RosParser] INFO: ParseToJson returning SUCCESS." << std::endl;
+        //std::cerr << "[RosParser] INFO: ParseToJson returning SUCCESS." << std::endl;
         return ROS_PARSER_SUCCESS;
 
     cleanup_cpp_object:

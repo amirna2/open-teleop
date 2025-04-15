@@ -22,25 +22,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Clean up apt cache to reduce image size
     && rm -rf /var/lib/apt/lists/*
 
+# Create log directory with proper permissions
+RUN mkdir -p /tmp/open_teleop_logs && \
+    chmod 777 /tmp/open_teleop_logs
+
+# Create working directory in teleop's home
+RUN mkdir -p /home/teleop/open-teleop && \
+    chown -R teleop:teleop /home/teleop/open-teleop
+
 # Set working directory
-WORKDIR /opt/open-teleop
+WORKDIR /home/teleop/open-teleop
 
 # Copy the installed files directly into the container
-COPY ./install/ /opt/open-teleop/
-
-# Create log directory with proper permissions
-RUN mkdir -p /var/log/open_teleop && \
-    chown -R teleop:teleop /var/log/open_teleop
+COPY ./install/ /home/teleop/open-teleop/
 
 # Fix permissions
-RUN chown -R teleop:teleop /opt/open-teleop
+RUN chown -R teleop:teleop /home/teleop/open-teleop
 
 # Switch to non-root user
 USER teleop:teleop
 
 # Set environment variables
-ENV PATH="/opt/open-teleop/bin:${PATH}"
+ENV PATH="/home/teleop/open-teleop/bin:${PATH}"
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
 # Set the entrypoint to use our start script
-ENTRYPOINT ["/opt/open-teleop/scripts/start.sh"] 
+ENTRYPOINT ["/home/teleop/open-teleop/scripts/start.sh"] 

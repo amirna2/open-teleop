@@ -141,6 +141,8 @@ func main() {
 
 	// --- Initialize ROS Parser ---
 	logger.Infof("Initializing ROS Parser")
+	// Set the logger for rosparser package
+	rosparser.SetLogger(logger)
 	if err := rosparser.Initialize(); err != nil {
 		logger.Fatalf("Failed to initialize ROS parser: %v", err)
 	}

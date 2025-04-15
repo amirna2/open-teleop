@@ -367,7 +367,7 @@ func (d *MessageDispatcher) Dispatch(data []byte) ([]byte, error) {
 	}
 
 	// JSON parsing failed, assume it's a raw OttMessage FlatBuffer
-	d.logger.Debugf("JSON parse failed, attempting to handle as raw Flatbuffer (%d bytes)", len(data))
+	d.logger.Debugf("JSON parse failed, dispatching as raw Flatbuffer (%d bytes)", len(data))
 	return d.handleRawFlatbuffer(data)
 }
 
