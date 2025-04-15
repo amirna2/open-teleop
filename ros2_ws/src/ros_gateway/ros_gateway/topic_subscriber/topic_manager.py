@@ -155,7 +155,7 @@ class TopicManager:
             msg: The ROS message
             topic_name: The name of the topic
         """
-        self.logger.info(f"DEBUG: handle_message invoked for topic: {topic_name}")
+        self.logger.debug(f"handle_message invoked for topic: {topic_name}")
         
         if topic_name not in self.subscriptions:
             self.logger.warning(f"Received message on unknown topic: {topic_name}")
@@ -164,11 +164,11 @@ class TopicManager:
         subscription = self.subscriptions[topic_name]
         ott_topic = subscription['ott_topic']
         
-        self.logger.info(f"DEBUG: Attempting to serialize ROS message for {topic_name}")
+        self.logger.debug(f"Attempting to serialize ROS message for {topic_name}")
         try:
             # Serialize the ROS message to CDR format
             serialized_msg = serialize_message(msg)
-            self.logger.info(f"DEBUG: Serialization successful for {topic_name}, size: {len(serialized_msg)}")
+            self.logger.debug(f"Serialization successful for {topic_name}, size: {len(serialized_msg)}")
             
             # Get current timestamp in nanoseconds
             timestamp_ns = self.node.get_clock().now().nanoseconds
@@ -176,7 +176,7 @@ class TopicManager:
             # Create FlatBuffer message
             builder = flatbuffers.Builder(1024)
             
-            self.logger.info(f"DEBUG: Creating FlatBuffer for {topic_name}")
+            self.logger.debug(f"Creating FlatBuffer for {topic_name}")
 
             # Create the OTT topic string
             ott_fb = builder.CreateString(ott_topic)
@@ -198,12 +198,12 @@ class TopicManager:
             
             # Get the binary buffer and send it to the controller
             buf = builder.Output()
-            self.logger.info(f"DEBUG: FlatBuffer created for {topic_name}, size: {len(buf)}")
+            self.logger.debug(f"FlatBuffer created for {topic_name}, size: {len(buf)}")
             
-            self.logger.info(f"Sending raw FlatBuffer ({len(buf)} bytes) for {ott_topic}")
-            self.logger.info(f"DEBUG: Attempting ZMQ send for {topic_name} -> {ott_topic}")
+            self.logger.debug(f"Sending raw FlatBuffer ({len(buf)} bytes) for {ott_topic}")
+            self.logger.debug(f"Attempting ZMQ send for {topic_name} -> {ott_topic}")
             reply_str = self.zmq_client.send_request_binary(buf) # New method
-            self.logger.info(f"DEBUG: ZMQ send attempted for {topic_name}")
+            self.logger.debug(f"ZMQ send attempted for {topic_name}")
 
             # Log the reply from the controller
             if reply_str:

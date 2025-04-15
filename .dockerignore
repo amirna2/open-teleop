@@ -2,7 +2,6 @@
 .vscode
 *.code-workspace
 build/
-install/
 log/
 logs/
 ros2_ws/build/

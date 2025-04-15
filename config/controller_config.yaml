@@ -2,8 +2,8 @@
 # Bootstrap configuration for the Open-Teleop Controller
 
 logging:
-  level: "INFO" # Options: DEBUG, INFO, WARN, ERROR
-  log_path: "/tmp/open_teleop_logs"
+  level: "DEBUG" # Options: DEBUG, INFO, WARN, ERROR
+  log_path: "/tmp/open_teleop"
   
 server:
   # Port for the controller's internal HTTP server (e.g., for admin API / healthchecks)

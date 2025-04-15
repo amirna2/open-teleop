@@ -34,6 +34,7 @@ func NewLogrusLogger(logLevel string, logDir string) (Logger, error) {
 	// Set Formatter to our custom SimpleFormatter
 	l.SetFormatter(&SimpleFormatter{
 		TimestampFormat: "2006/01/02 15:04:05.000000", // Added microseconds
+		ProcessName:     "controller",                 // Add consistent process name
 	})
 
 	// Set Console Output
@@ -96,6 +97,7 @@ func (l *logrusLogger) Fatalf(format string, args ...interface{}) {
 // Example: 2025/04/06 17:30:00 [INF] Log message here key1=value1 key2=value2
 type SimpleFormatter struct {
 	TimestampFormat string
+	ProcessName     string // Added process name field
 }
 
 // Format implements the logrus.Formatter interface
@@ -112,9 +114,18 @@ func (f *SimpleFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 		timestampFormat = "2006/01/02 15:04:05.000000" // Default format with microseconds
 	}
 
+	// Get process name (default to "controller" if not set)
+	processName := f.ProcessName
+	if processName == "" {
+		processName = "controller"
+	}
+
 	// Timestamp
 	b.WriteString(entry.Time.Format(timestampFormat))
 	b.WriteString(" ")
+
+	// Process name prefix (like ROS Gateway)
+	fmt.Fprintf(b, "[%s] ", processName)
 
 	// Level (e.g., [INF], [DBG]) - Custom mapping
 	var level string

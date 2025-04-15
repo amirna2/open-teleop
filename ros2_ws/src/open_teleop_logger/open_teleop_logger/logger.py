@@ -34,9 +34,9 @@ class UnifiedFormatter(logging.Formatter):
     """
     
     def __init__(self):
-        # Format: YYYY-MM-DD HH:MM:SS [LVL] [logger_name] Message
-        super().__init__('%(asctime)s [%(levelname)3.3s] [%(name)s] %(message)s', 
-                         datefmt='%Y-%m-%d %H:%M:%S')
+        # Format: HH:MM:SS.microseconds [LVL] [logger_name] Message
+        super().__init__('%(asctime)s.%(msecs)03d [%(levelname)3.3s] [%(name)s] %(message)s', 
+                         datefmt='%H:%M:%S')
         
         # Map for converting full level names to truncated versions
         self.level_map = {

@@ -16,9 +16,9 @@ gateway:
     
   # Logger configuration
   logging:
-    level: "DEBUG"
+    level: "INFO"
     log_to_file: true
-    log_path: "/tmp/open_teleop_logs"
+    log_path: "/tmp/open_teleop"
     log_rotation_days: 7 
 
 # Optional: Add any other gateway-specific operational settings here

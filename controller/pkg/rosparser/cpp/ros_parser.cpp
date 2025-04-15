@@ -574,7 +574,27 @@ int RosParser_ParseToJson(
         }
         if (g_debug_logging_enabled) std::cerr << "Using Introspection Type Support Identifier: " << introspection_ts->typesupport_identifier << std::endl;
 
-        const std::string rmw_identifier = "rosidl_typesupport_fastrtps_cpp";
+        // Get the RMW implementation from environment variable or use a fallback
+        std::string rmw_identifier = "rosidl_typesupport_fastrtps_cpp"; // Default fallback
+        const char* rmw_impl = std::getenv("RMW_IMPLEMENTATION");
+        
+        // Convert environment variable to typesupport library name if set
+        if (rmw_impl) {
+            std::string rmw_impl_str(rmw_impl);
+            if (rmw_impl_str == "rmw_fastrtps_cpp") {
+                rmw_identifier = "rosidl_typesupport_fastrtps_cpp";
+                std::cerr << "[RosParser] INFO: Using FastRTPS RMW implementation." << std::endl;
+            } else if (rmw_impl_str == "rmw_cyclonedds_cpp") {
+                rmw_identifier = "rosidl_typesupport_introspection_cpp";
+                std::cerr << "[RosParser] INFO: Using CycloneDDS RMW implementation." << std::endl;
+            } else {
+                std::cerr << "[RosParser] WARNING: Unknown RMW_IMPLEMENTATION '" << rmw_impl_str 
+                          << "', falling back to " << rmw_identifier << std::endl;
+            }
+        } else {
+            std::cerr << "[RosParser] INFO: RMW_IMPLEMENTATION not set, using " << rmw_identifier << std::endl;
+        }
+
         try {
             rmw_library = rosbag2_cpp::get_typesupport_library(message_type, rmw_identifier);
             rmw_ts = rosbag2_cpp::get_typesupport_handle(message_type, rmw_identifier, rmw_library);

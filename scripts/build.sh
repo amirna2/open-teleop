@@ -11,6 +11,12 @@ YELLOW='\033[0;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Default version if not specified
+DEFAULT_VERSION="0.1.0"
+
+# Default installation directory (relative path for local development)
+DEFAULT_INSTALL_DIR="./install"
+
 # Function to check if a command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -33,25 +39,23 @@ print_error() {
 
 # Display help information
 show_help() {
-    echo "Usage: $0 COMMAND"
+    echo "Usage: $0 COMMAND [OPTIONS]"
     echo ""
     echo "Commands:"
-    echo "  all         Build all components (default if no command specified)"
-    echo "  gateway     Build only ROS Gateway node"
-    echo "  controller  Build only Go controller"
-    echo "  fbs         Generate FlatBuffers interface code only"
-    echo "  clean       Clean all build artifacts"
-    echo "  help        Show this help message"
+    echo "  all             Build all components (default if no command specified)"
+    echo "  gateway         Build only ROS Gateway node"
+    echo "  controller      Build only Go controller"
+    echo "  fbs             Generate FlatBuffers interface code only"
+    echo "  install [DIR]   Install built artifacts to specified directory (default: ./install)"
+    echo "  clean           Clean all build artifacts"
+    echo "  help            Show this help message"
     echo ""
-    echo "Notes:"
-    echo "  - FlatBuffers code is automatically regenerated during builds"
-    echo "  - Use 'fbs' command to manually generate FlatBuffers code without building"
+    echo "Options:"
+    echo "  --version VER   Specify version for packaging/installing"
     echo ""
     echo "Examples:"
-    echo "  $0 all        # Build everything"
-    echo "  $0 clean      # Clean all build artifacts"
-    echo "  $0 fbs        # Generate FlatBuffers code only"
-    echo "  $0 gateway    # Build only ROS Gateway node"
+    echo "  $0 all                     # Build everything"
+    echo "  $0 install ~/open-teleop   # Install to custom directory"
 }
 
 # Check for required tools
@@ -270,6 +274,30 @@ build_go() {
         generate_interfaces
     fi
     
+    # Build ROS parser C++ library
+    print_status "Building ROS parser C++ library..."
+    if [ -d "controller/pkg/rosparser/cpp" ]; then
+        mkdir -p lib
+        cd controller/pkg/rosparser/cpp
+        mkdir -p build
+        cd build
+        cmake .. && make
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}✓ ROS parser C++ library built successfully${NC}"
+            # Copy the library to the project lib directory
+            cp lib/libros_parser.so ../../../../../lib/
+        else
+            print_error "Error building ROS parser C++ library"
+            cd ../../../../..
+            exit 1
+        fi
+        cd ../../../../..  # Return to project root
+    else
+        print_error "Error: ROS parser C++ directory not found at controller/pkg/rosparser/cpp"
+        exit 1
+    fi
+    
+    # Build Go controller
     cd controller
     
     print_status "Downloading Go dependencies..."
@@ -278,6 +306,8 @@ build_go() {
     print_status "Building controller..."
     # Create bin directory if it doesn't exist
     mkdir -p bin
+    # Set LD_LIBRARY_PATH to include the built ROS parser library
+    export LD_LIBRARY_PATH="$(pwd)/../lib:$LD_LIBRARY_PATH"
     go build -o bin/controller ./cmd/controller
     
     if [ $? -eq 0 ]; then
@@ -287,18 +317,202 @@ build_go() {
         exit 1
     fi
     
-    cd ..
+    cd ..  # Return to project root
 }
 
-# Execute the build process
+# Install built components to target directory
+install_runtime() {
+    print_section "Installing Open-Teleop"
+    
+    # Ensure everything is built first if needed
+    if [ ! -d "controller/bin" ] || [ ! -d "ros2_ws/install" ]; then
+        print_status "Building all components before installing..."
+        generate_interfaces
+        build_ros2
+        build_go
+    fi
+    
+    # Default to current directory's 'install' folder if no path provided
+    INSTALL_DIR="${1:-./install}"
+    
+    print_status "Installing to $INSTALL_DIR..."
+    
+    # Clean previous installation if it exists
+    if [ -d "$INSTALL_DIR" ]; then
+        rm -rf "$INSTALL_DIR"
+    fi
+    
+    # Create installation directory structure
+    mkdir -p $INSTALL_DIR/bin
+    mkdir -p $INSTALL_DIR/config
+    mkdir -p $INSTALL_DIR/ros2_overlay
+    mkdir -p $INSTALL_DIR/scripts
+    mkdir -p $INSTALL_DIR/lib
+    
+    # Copy Go controller
+    print_status "Installing Go controller..."
+    cp controller/bin/controller $INSTALL_DIR/bin/
+    
+    # Copy ROS parser library
+    print_status "Installing ROS parser library..."
+    if [ -f "lib/libros_parser.so" ]; then
+        cp lib/libros_parser.so $INSTALL_DIR/lib/
+    else
+        print_error "Warning: ROS parser library not found at lib/libros_parser.so"
+        print_error "The controller may not work correctly without it."
+    fi
+    
+    # Copy configuration files
+    print_status "Installing configuration files..."
+    cp -r config/* $INSTALL_DIR/config/
+    
+    # Handle ROS2 workspace - need to regenerate flatbuffers code first
+    print_status "Regenerating interface code..."
+    generate_interfaces
+    
+    print_status "Installing ROS2 overlay with resolved symlinks..."
+    
+    # Clean and rebuild without symlinks
+    cd ros2_ws
+    source /opt/ros/jazzy/setup.bash
+    rm -rf build install log
+    colcon build --packages-select open_teleop_logger ros_gateway
+    cd ..
+    
+    # Copy with resolved symlinks
+    cp -rL ros2_ws/install/* $INSTALL_DIR/ros2_overlay/
+    
+    # Make sure flatbuffers directory exists in the site-packages for ros_gateway
+    print_status "Ensuring flatbuffers files are properly installed..."
+    SITE_PACKAGES_DIR="$INSTALL_DIR/ros2_overlay/ros_gateway/lib/python3.12/site-packages/ros_gateway"
+    mkdir -p "$SITE_PACKAGES_DIR/flatbuffers/open_teleop"
+    
+    # Copy the generated flatbuffers files
+    cp -r ros2_ws/src/ros_gateway/ros_gateway/flatbuffers/* "$SITE_PACKAGES_DIR/flatbuffers/"
+    
+    # Copy CycloneDDS config to the right location
+    print_status "Installing CycloneDDS config..."
+    mkdir -p $INSTALL_DIR/ros2_overlay/share/ros_gateway/config
+    cp ros2_ws/src/ros_gateway/config/cyclonedds.xml $INSTALL_DIR/ros2_overlay/share/ros_gateway/config/
+    
+    # Create workspace setup script
+    print_status "Creating workspace setup script..."
+    cat > $INSTALL_DIR/scripts/workspace.bash << 'EOF'
+#!/bin/bash
+# Open-Teleop workspace setup script
+
+# Find the workspace root based on script location
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+WORKSPACE_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+
+# Source ROS2 environment first
+if [ -f "/opt/ros/jazzy/setup.bash" ]; then
+    source /opt/ros/jazzy/setup.bash
+else
+    echo "WARNING: ROS2 Jazzy setup.bash not found!"
+fi
+
+# Source the ROS2 overlay
+if [ -f "$WORKSPACE_ROOT/ros2_overlay/setup.bash" ]; then
+    source "$WORKSPACE_ROOT/ros2_overlay/setup.bash"
+else
+    echo "ERROR: ROS2 overlay setup.bash not found!"
+    return 1
+fi
+
+# Add controller binary directory to PATH (only if not already there)
+BIN_DIR="$WORKSPACE_ROOT/bin"
+if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+    export PATH="$BIN_DIR:$PATH"
+fi
+
+# Add library directory to LD_LIBRARY_PATH (only if not already there)
+LIB_DIR="$WORKSPACE_ROOT/lib"
+if [[ ":$LD_LIBRARY_PATH:" != *":$LIB_DIR:"* ]]; then
+    export LD_LIBRARY_PATH="$LIB_DIR:$LD_LIBRARY_PATH"
+fi
+
+# Set RMW Implementation to CycloneDDS
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+# Configure logging with microsecond precision
+export RCUTILS_CONSOLE_OUTPUT_FORMAT="[{severity}] [{time:yyyy-MM-dd HH:mm:ss.uuuuuu}] [{name}]: {message}"
+
+# Configure CycloneDDS
+CONFIG_FILE="$WORKSPACE_ROOT/ros2_overlay/share/ros_gateway/config/cyclonedds.xml"
+if [ -f "$CONFIG_FILE" ]; then
+    export CYCLONEDDS_URI="$CONFIG_FILE"
+    echo "CycloneDDS configured with: $CONFIG_FILE"
+else
+    echo "WARNING: CycloneDDS config file not found at $CONFIG_FILE!"
+fi
+
+# Set configuration directory for controller
+export OPEN_TELEOP_CONFIG_DIR="$WORKSPACE_ROOT/config"
+
+echo "Open-Teleop workspace environment configured. You can now run:"
+echo "  - controller (Go controller)"
+echo "  - ros2 launch ros_gateway gateway.launch.py (ROS Gateway)"
+EOF
+    chmod +x $INSTALL_DIR/scripts/workspace.bash
+    
+    # Create a simple start script
+    print_status "Creating start script..."
+    cat > $INSTALL_DIR/scripts/start.sh << 'EOF'
+#!/bin/bash
+# Open-Teleop startup script
+
+# Find the workspace root based on script location
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+WORKSPACE_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+
+# Source the workspace environment
+source "$SCRIPT_DIR/workspace.bash"
+
+# Start the Go controller in the background
+"$WORKSPACE_ROOT/bin/controller" -config-dir "$WORKSPACE_ROOT/config" &
+CONTROLLER_PID=$!
+echo "Controller started with PID: $CONTROLLER_PID"
+
+# Wait a moment for controller to initialize
+sleep 2
+
+# Start the ROS Gateway
+ros2 launch ros_gateway gateway.launch.py
+
+# When ROS Gateway exits, also kill the controller
+kill $CONTROLLER_PID 2>/dev/null || true
+EOF
+    chmod +x $INSTALL_DIR/scripts/start.sh
+    
+    echo -e "${GREEN}✓ Installation complete in $INSTALL_DIR${NC}"
+    echo "To use the installed software:"
+    echo "  source $INSTALL_DIR/scripts/workspace.bash"
+}
+
+# Main script execution
 main() {
-    print_section "Open-Teleop Build Process Started"
+    # Set defaults
+    CMD=${1:-all}
     
-    # Check dependencies first
-    check_dependencies
+    # Parse additional arguments
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --version)
+                VERSION="$2"
+                shift 2
+                ;;
+            *)
+                INSTALL_DIR="$1"
+                shift
+                ;;
+        esac
+    done
     
-    case "$CMD" in
+    case $CMD in
         all)
+            check_dependencies
             generate_interfaces
             build_ros2
             build_go
@@ -315,51 +529,42 @@ main() {
             echo "2. In another terminal:"
             echo "   cd controller"
             echo "   ./bin/controller"
-            echo ""
-            echo "Or use Docker Compose:"
-            echo "   cd infra"
-            echo "   docker-compose up"
             ;;
-        
         gateway)
-            print_status "Building ROS Gateway node only"
+            check_dependencies
             build_ros2
-            print_section "Gateway Build Complete!"
             ;;
-        
         controller)
-            print_status "Building Go controller only"
+            check_dependencies
             build_go
-            print_section "Controller Build Complete!"
             ;;
-        
         fbs)
-            print_status "Generating FlatBuffers interface code only"
+            check_dependencies
             generate_interfaces
-            print_section "FlatBuffers Generation Complete!"
             ;;
-        
+        install)
+            check_dependencies
+            install_runtime "$INSTALL_DIR"
+            ;;
         clean)
-            print_status "Cleaning all build artifacts"
             clean_build
-            print_section "Cleanup Complete!"
+            # Also clean install directory if it exists
+            if [ -d "install" ]; then
+                print_status "Cleaning install directory..."
+                rm -rf install
+                echo -e "${GREEN}✓ Removed install directory${NC}"
+            fi
             ;;
-        
+        help)
+            show_help
+            ;;
         *)
+            print_error "Error: Unknown command '$CMD'"
             show_help
             exit 1
             ;;
     esac
 }
 
-# Parse command (default to "all" if not specified)
-CMD="${1:-all}"
-
-# If command is "help", show help and exit
-if [[ "$CMD" == "help" ]]; then
-    show_help
-    exit 0
-fi
-
-# Run the main function
-main 
+# Entry point
+main "$@" 
