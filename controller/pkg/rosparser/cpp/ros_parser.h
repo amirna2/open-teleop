@@ -56,6 +56,29 @@ int RosParser_ParseToJson(
 );
 
 /**
+ * Process a ROS2 image message and extract metadata and raw data.
+ * Specifically designed for sensor_msgs/msg/Image and sensor_msgs/msg/CompressedImage.
+ * 
+ * @param message_type The ROS2 message type (e.g., "sensor_msgs/msg/Image")
+ * @param message_data The serialized ROS2 message data
+ * @param message_size Size of the message data in bytes
+ * @param metadata_json Pointer to store JSON metadata (caller must free with RosParser_FreeString)
+ * @param raw_data Pointer to store raw image data (caller must copy, will be freed internally)
+ * @param raw_data_size Pointer to store size of raw data in bytes
+ * @param error_msg Pointer to store error message (caller must free with RosParser_FreeString)
+ * @return ROS_PARSER_SUCCESS on success, error code otherwise
+ */
+int RosParser_ExtractImageData(
+    const char* message_type,
+    const unsigned char* message_data,
+    int message_size,
+    char** metadata_json,
+    unsigned char** raw_data,
+    int* raw_data_size,
+    char** error_msg
+);
+
+/**
  * Free a string allocated by the parser.
  * 
  * @param str The string to free

@@ -6,6 +6,17 @@ package rosparser
 #cgo LDFLAGS: -L${SRCDIR}/cpp/build/lib -lros_parser -Wl,-rpath,${SRCDIR}/cpp/build/lib
 #include "cpp/ros_parser.h"
 #include <stdlib.h>
+
+// Explicitly declare C functions that might not be visible to the Go compiler
+int RosParser_ExtractImageData(
+    const char* message_type,
+    const unsigned char* message_data,
+    int message_size,
+    char** metadata_json,
+    unsigned char** raw_data,
+    int* raw_data_size,
+    char** error_msg
+);
 */
 import "C"
 import (
@@ -202,4 +213,133 @@ func ParseToJSON(messageType string, messageData []byte) (map[string]interface{}
 		}
 	}
 	return result_map, nil
+}
+
+// ImageData represents a processed image from a ROS message
+type ImageData struct {
+	// Metadata contains image properties (width, height, encoding, etc.)
+	Metadata map[string]interface{}
+
+	// RawData contains the unprocessed binary image data
+	RawData []byte
+}
+
+// ExtractImageData parses a ROS2 image message and returns both metadata and raw data.
+// This function is specifically designed for sensor_msgs/msg/Image and sensor_msgs/msg/CompressedImage.
+func ExtractImageData(messageType string, messageData []byte) (*ImageData, error) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if !initialized {
+		if logger != nil {
+			logger.Errorf("ROS Parser not initialized")
+		}
+		return nil, &Error{
+			Code:    ErrorInitFailed,
+			Message: "ROS Parser not initialized",
+		}
+	}
+
+	// Check if this is a supported image type
+	if messageType != "sensor_msgs/msg/Image" && messageType != "sensor_msgs/msg/CompressedImage" {
+		errMsg := fmt.Sprintf("Unsupported image type: %s", messageType)
+		if logger != nil {
+			logger.Errorf(errMsg)
+		}
+		return nil, &Error{
+			Code:    ErrorUnsupported,
+			Message: errMsg,
+		}
+	}
+
+	if logger != nil {
+		logger.Debugf("Extracting image data from ROS message of type: %s (size: %d bytes)",
+			messageType, len(messageData))
+	}
+
+	// Convert Go string to C string
+	cMessageType := C.CString(messageType)
+	defer C.free(unsafe.Pointer(cMessageType))
+
+	// Prepare the message data
+	var cMessageData *C.uchar
+	if len(messageData) > 0 {
+		cMessageData = (*C.uchar)(unsafe.Pointer(&messageData[0]))
+	} else {
+		if logger != nil {
+			logger.Errorf("Empty message data provided")
+		}
+		return nil, &Error{
+			Code:    ErrorInvalidMsg,
+			Message: "Empty message data",
+		}
+	}
+
+	// Prepare output parameters
+	var metadataJSON *C.char
+	var rawData *C.uchar
+	var rawDataSize C.int
+	var errorMsg *C.char
+
+	// Call the C function
+	result := C.RosParser_ExtractImageData(
+		cMessageType,
+		cMessageData,
+		C.int(len(messageData)),
+		&metadataJSON,
+		&rawData,
+		&rawDataSize,
+		&errorMsg,
+	)
+
+	// Check for errors
+	if result != Success {
+		var errString string
+		if errorMsg != nil {
+			errString = C.GoString(errorMsg)
+			C.RosParser_FreeString(errorMsg)
+		} else {
+			errString = C.GoString(C.RosParser_GetErrorString(result))
+		}
+		if logger != nil {
+			logger.Errorf("Failed to extract image data: %s", errString)
+		}
+		return nil, &Error{
+			Code:    int(result),
+			Message: errString,
+		}
+	}
+
+	// Process the results
+	metadataStr := C.GoString(metadataJSON)
+	C.RosParser_FreeString(metadataJSON)
+
+	// Create a Go copy of the raw data
+	rawDataSize_int := int(rawDataSize)
+	goRawData := make([]byte, rawDataSize_int)
+	if rawDataSize_int > 0 {
+		// Convert C pointer to Go slice with correct type
+		rawDataSlice := (*[1 << 30]byte)(unsafe.Pointer(rawData))[:rawDataSize_int:rawDataSize_int]
+		copy(goRawData, rawDataSlice)
+		// Free the C memory
+		C.free(unsafe.Pointer(rawData))
+	}
+
+	// Parse the metadata JSON
+	var metadata map[string]interface{}
+	if err := json.Unmarshal([]byte(metadataStr), &metadata); err != nil {
+		if logger != nil {
+			logger.Errorf("Failed to parse metadata JSON: %v", err)
+		}
+		return nil, fmt.Errorf("failed to parse metadata JSON: %w", err)
+	}
+
+	if logger != nil {
+		logger.Infof("Successfully extracted image data: %d bytes with metadata", rawDataSize_int)
+	}
+
+	return &ImageData{
+		Metadata: metadata,
+		RawData:  goRawData,
+	}, nil
 }

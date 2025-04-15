@@ -699,4 +699,360 @@ const char* RosParser_GetErrorString(int error_code) {
     return unknown_error.c_str();
 }
 
+int RosParser_ExtractImageData(
+    const char* message_type,
+    const unsigned char* message_data,
+    int message_size,
+    char** metadata_json,
+    unsigned char** raw_data,
+    int* raw_data_size,
+    char** error_msg)
+{
+    if (!g_is_initialized) {
+        if (error_msg) {
+            *error_msg = allocate_string("ROS Parser not initialized");
+        }
+        std::cerr << "[RosParser] ERROR: Parser not initialized. Aborting image extraction." << std::endl;
+        return ROS_PARSER_ERROR_INIT_FAILED;
+    }
+
+    if (!message_type || !message_data || message_size <= 0) {
+        if (error_msg) {
+            *error_msg = allocate_string("Invalid input parameters");
+        }
+        std::cerr << "[RosParser] ERROR: Invalid input parameters for image extraction." << std::endl;
+        return ROS_PARSER_ERROR_INVALID_MESSAGE;
+    }
+
+    // Check if the message type is supported
+    std::string msg_type_str(message_type);
+    bool is_compressed = false;
+    
+    if (msg_type_str != "sensor_msgs/msg/Image" && msg_type_str != "sensor_msgs/msg/CompressedImage") {
+        if (error_msg) {
+            *error_msg = allocate_string("Message type is not a supported image type");
+        }
+        std::cerr << "[RosParser] ERROR: Message type '" << message_type 
+                  << "' is not a supported image type." << std::endl;
+        return ROS_PARSER_ERROR_UNSUPPORTED_TYPE;
+    }
+    
+    std::cerr << "[RosParser] INFO: Extracting " << msg_type_str << " data." << std::endl;
+    is_compressed = (msg_type_str == "sensor_msgs/msg/CompressedImage");
+    
+    // Variables needed for ROS message processing
+    const rosidl_message_type_support_t* introspection_ts = nullptr;
+    const rosidl_message_type_support_t* rmw_ts = nullptr;
+    const rosidl_typesupport_introspection_cpp::MessageMembers* members = nullptr;
+    std::shared_ptr<rcpputils::SharedLibrary> rmw_library = nullptr;
+    void* cpp_message_object = nullptr;
+    
+    try {
+        // Step 1: Get typesupport and deserialize the message (similar to ParseToJson)
+        MessageTypeSupport introspection_support_wrapper;
+        if (!get_message_type_support(message_type, introspection_support_wrapper)) {
+            std::string err = "Unsupported message type (introspection): " + std::string(message_type);
+            if (error_msg) *error_msg = allocate_string(err.c_str());
+            std::cerr << "[RosParser] ERROR: Failed to get introspection typesupport for image." << std::endl;
+            return ROS_PARSER_ERROR_UNSUPPORTED_TYPE;
+        }
+        introspection_ts = introspection_support_wrapper.type_support;
+
+        members = static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers*>(introspection_ts->data);
+        if (!members) {
+            if (error_msg) *error_msg = allocate_string("Failed to get message members from introspection type support");
+            std::cerr << "[RosParser] ERROR: Failed to extract MessageMembers for image." << std::endl;
+            return ROS_PARSER_ERROR_SERIALIZATION;
+        }
+
+        // Get the RMW implementation (same as ParseToJson)
+        std::string rmw_identifier = "rosidl_typesupport_fastrtps_cpp"; // Default fallback
+        const char* rmw_impl = std::getenv("RMW_IMPLEMENTATION");
+        
+        // Convert environment variable to typesupport library name if set
+        if (rmw_impl) {
+            std::string rmw_impl_str(rmw_impl);
+            if (rmw_impl_str == "rmw_fastrtps_cpp") {
+                rmw_identifier = "rosidl_typesupport_fastrtps_cpp";
+            } else if (rmw_impl_str == "rmw_cyclonedds_cpp") {
+                rmw_identifier = "rosidl_typesupport_introspection_cpp";
+            } else {
+                std::cerr << "[RosParser] WARNING: Unknown RMW_IMPLEMENTATION '" << rmw_impl_str 
+                          << "', falling back to " << rmw_identifier << std::endl;
+            }
+        }
+
+        try {
+            rmw_library = rosbag2_cpp::get_typesupport_library(message_type, rmw_identifier);
+            rmw_ts = rosbag2_cpp::get_typesupport_handle(message_type, rmw_identifier, rmw_library);
+        } catch (const std::exception& e) {
+            std::string err = "Failed to get RMW typesupport for image: " + std::string(e.what());
+            if (error_msg) *error_msg = allocate_string(err.c_str());
+            std::cerr << "[RosParser] ERROR: " << err << std::endl;
+            return ROS_PARSER_ERROR_UNSUPPORTED_TYPE;
+        }
+
+        // Prepare serialized message view
+        rclcpp::SerializedMessage serialized_msg_view(message_size);
+        memcpy(serialized_msg_view.get_rcl_serialized_message().buffer, message_data, message_size);
+        serialized_msg_view.get_rcl_serialized_message().buffer_length = message_size;
+        serialized_msg_view.get_rcl_serialized_message().buffer_capacity = message_size;
+
+        // Allocate and initialize message object
+        cpp_message_object = malloc(members->size_of_);
+        if (!cpp_message_object) {
+            std::string err = "Memory allocation failed for image message object";
+            if (error_msg) *error_msg = allocate_string(err.c_str());
+            std::cerr << "[RosParser] ERROR: " << err << std::endl;
+            return ROS_PARSER_ERROR_MEMORY;
+        }
+        members->init_function(cpp_message_object, rosidl_runtime_cpp::MessageInitialization::ZERO);
+
+        // Deserialize the message
+        try {
+            std::cerr << "[RosParser] INFO: Deserializing " << msg_type_str << "..." << std::endl;
+            rclcpp::SerializationBase serialization_base(rmw_ts);
+            serialization_base.deserialize_message(&serialized_msg_view, cpp_message_object);
+            std::cerr << "[RosParser] INFO: Deserialization successful." << std::endl;
+        } catch (const std::exception& deserialize_err) {
+            std::string err = "Failed to deserialize image message: " + std::string(deserialize_err.what());
+            if (error_msg) *error_msg = allocate_string(err.c_str());
+            std::cerr << "[RosParser] ERROR: " << err << std::endl;
+            members->fini_function(cpp_message_object);
+            free(cpp_message_object);
+            return ROS_PARSER_ERROR_SERIALIZATION;
+        }
+
+        // Step 2: Extract metadata as JSON and raw data pointer
+        json metadata;
+        const uint8_t* data_ptr = nullptr;
+        int data_size = 0;
+        
+        using namespace rosidl_typesupport_introspection_cpp;
+        
+        // Process based on message type
+        if (is_compressed) {
+            // Handle CompressedImage
+            std::cerr << "[RosParser] INFO: Processing CompressedImage message fields..." << std::endl;
+            // Extract header, format, and data fields
+            for (uint32_t i = 0; i < members->member_count_; ++i) {
+                const auto& member = members->members_[i];
+                const uint8_t* field_data_ptr = static_cast<const uint8_t*>(cpp_message_object) + member.offset_;
+                
+                std::string member_name(member.name_);
+                std::cerr << "[RosParser] DEBUG: Processing CompressedImage field: " << member_name << std::endl;
+                
+                if (member_name == "header") {
+                    // Extract header info (timestamp, frame_id)
+                    json header_json;
+                    const MessageMembers* header_members = 
+                        static_cast<const MessageMembers*>(member.members_->data);
+                    
+                    message_to_json_internal(header_members, field_data_ptr, header_json);
+                    metadata["header"] = header_json;
+                }
+                else if (member_name == "format") {
+                    // Extract format (string)
+                    const auto* format_ptr = reinterpret_cast<const std::string*>(field_data_ptr);
+                    if (format_ptr) {
+                        metadata["format"] = *format_ptr;
+                    }
+                }
+                else if (member_name == "data") {
+                    // This is the raw compressed image data (bytes)
+                    std::cerr << "[RosParser] INFO: Found data field in CompressedImage" << std::endl;
+                    std::cerr << "[RosParser] DEBUG: Data field is_array_: " << member.is_array_ 
+                              << ", is_upper_bound_: " << member.is_upper_bound_
+                              << ", array_size_: " << member.array_size_ << std::endl;
+                    
+                    // For CompressedImage message, data is std::vector<uint8_t>
+                    // We need a safer approach to access the vector
+                    try {
+                        const std::vector<uint8_t>* image_data_vec = reinterpret_cast<const std::vector<uint8_t>*>(field_data_ptr);
+                        if (image_data_vec) {
+                            // Use vector's size() and data() methods
+                            data_size = image_data_vec->size();
+                            data_ptr = image_data_vec->data();
+                            
+                            std::cerr << "[RosParser] DEBUG: Vector access - size: " << data_size 
+                                      << ", data_ptr: " << (void*)data_ptr << std::endl;
+                            
+                            metadata["data_size"] = data_size;
+                        } else {
+                            std::cerr << "[RosParser] ERROR: CompressedImage data vector pointer is null" << std::endl;
+                        }
+                    } catch (const std::exception& e) {
+                        std::cerr << "[RosParser] ERROR: Exception accessing vector data: " << e.what() << std::endl;
+                        data_ptr = nullptr;
+                        data_size = 0;
+                    }
+                }
+            }
+        }
+        else {
+            // Handle regular Image
+            std::cerr << "[RosParser] INFO: Processing Image message fields..." << std::endl;
+            // Extract header, height, width, encoding, step, data fields
+            for (uint32_t i = 0; i < members->member_count_; ++i) {
+                const auto& member = members->members_[i];
+                const uint8_t* field_data_ptr = static_cast<const uint8_t*>(cpp_message_object) + member.offset_;
+                
+                std::string member_name(member.name_);
+                std::cerr << "[RosParser] DEBUG: Processing Image field: " << member_name << std::endl;
+                
+                if (member_name == "header") {
+                    // Extract header info (timestamp, frame_id)
+                    json header_json;
+                    const MessageMembers* header_members = 
+                        static_cast<const MessageMembers*>(member.members_->data);
+                    
+                    message_to_json_internal(header_members, field_data_ptr, header_json);
+                    metadata["header"] = header_json;
+                }
+                else if (member_name == "height") {
+                    metadata["height"] = *reinterpret_cast<const uint32_t*>(field_data_ptr);
+                    std::cerr << "[RosParser] DEBUG: Height: " << metadata["height"] << std::endl;
+                }
+                else if (member_name == "width") {
+                    metadata["width"] = *reinterpret_cast<const uint32_t*>(field_data_ptr);
+                    std::cerr << "[RosParser] DEBUG: Width: " << metadata["width"] << std::endl;
+                }
+                else if (member_name == "encoding") {
+                    const auto* encoding_ptr = reinterpret_cast<const std::string*>(field_data_ptr);
+                    if (encoding_ptr) {
+                        metadata["encoding"] = *encoding_ptr;
+                        std::cerr << "[RosParser] DEBUG: Encoding: " << metadata["encoding"] << std::endl;
+                    }
+                }
+                else if (member_name == "is_bigendian") {
+                    metadata["is_bigendian"] = *reinterpret_cast<const uint8_t*>(field_data_ptr);
+                }
+                else if (member_name == "step") {
+                    metadata["step"] = *reinterpret_cast<const uint32_t*>(field_data_ptr);
+                    std::cerr << "[RosParser] DEBUG: Step: " << metadata["step"] << std::endl;
+                }
+                else if (member_name == "data") {
+                    // This is the raw image data (bytes)
+                    std::cerr << "[RosParser] INFO: Found data field in regular Image" << std::endl;
+                    std::cerr << "[RosParser] DEBUG: Data field is_array_: " << member.is_array_ 
+                              << ", is_upper_bound_: " << member.is_upper_bound_
+                              << ", array_size_: " << member.array_size_ << std::endl;
+                    
+                    // For Image message, data is std::vector<uint8_t>
+                    // We need a safer approach to access the vector
+                    try {
+                        const std::vector<uint8_t>* image_data_vec = reinterpret_cast<const std::vector<uint8_t>*>(field_data_ptr);
+                        if (image_data_vec) {
+                            // Use vector's size() and data() methods
+                            data_size = image_data_vec->size();
+                            data_ptr = image_data_vec->data();
+                            
+                            std::cerr << "[RosParser] DEBUG: Vector access - size: " << data_size 
+                                      << ", data_ptr: " << (void*)data_ptr << std::endl;
+                            
+                            // Sanity check on size - height * width * 3 for RGB
+                            size_t expected_size = metadata["height"].get<uint32_t>() * 
+                                                  metadata["width"].get<uint32_t>() * 3; // Assuming 3 bytes per pixel for RGB
+                            
+                            std::cerr << "[RosParser] DEBUG: Expected size (for RGB): " << expected_size 
+                                      << ", actual size: " << data_size << std::endl;
+                            
+                            if (data_size != expected_size && metadata["encoding"].get<std::string>() == "rgb8") {
+                                std::cerr << "[RosParser] WARNING: Image data size doesn't match expected size for rgb8 encoding" 
+                                          << std::endl;
+                            }
+                            
+                            metadata["data_size"] = data_size;
+                        } else {
+                            std::cerr << "[RosParser] ERROR: Image data vector pointer is null" << std::endl;
+                        }
+                    } catch (const std::exception& e) {
+                        std::cerr << "[RosParser] ERROR: Exception accessing vector data: " << e.what() << std::endl;
+                        data_ptr = nullptr;
+                        data_size = 0;
+                    }
+                }
+            }
+        }
+        
+        // Validate that we found the image data
+        std::cerr << "[RosParser] INFO: Checking image data - data_ptr: " << (data_ptr ? "valid" : "NULL") 
+                  << ", data_size: " << data_size << std::endl;
+                 
+        if (!data_ptr || data_size <= 0) {
+            std::string err = "Failed to extract raw image data";
+            if (error_msg) *error_msg = allocate_string(err.c_str());
+            std::cerr << "[RosParser] ERROR: " << err << std::endl;
+            members->fini_function(cpp_message_object);
+            free(cpp_message_object);
+            return ROS_PARSER_ERROR_SERIALIZATION;
+        }
+        
+        // Step 3: Convert metadata to JSON string and copy raw data
+        try {
+            // Convert metadata to JSON string
+            std::string metadata_str = metadata.dump();
+            *metadata_json = allocate_string(metadata_str);
+            if (!*metadata_json) {
+                std::string err = "Memory allocation failed for metadata JSON";
+                if (error_msg) *error_msg = allocate_string(err.c_str());
+                std::cerr << "[RosParser] ERROR: " << err << std::endl;
+                members->fini_function(cpp_message_object);
+                free(cpp_message_object);
+                return ROS_PARSER_ERROR_MEMORY;
+            }
+            
+            // Allocate and copy raw data
+            // Note: We need to make a copy since the original data will be freed
+            // when we free the message object
+            unsigned char* raw_data_copy = static_cast<unsigned char*>(malloc(data_size));
+            if (!raw_data_copy) {
+                std::string err = "Memory allocation failed for raw image data";
+                if (error_msg) *error_msg = allocate_string(err.c_str());
+                std::cerr << "[RosParser] ERROR: " << err << std::endl;
+                free(*metadata_json);
+                *metadata_json = nullptr;
+                members->fini_function(cpp_message_object);
+                free(cpp_message_object);
+                return ROS_PARSER_ERROR_MEMORY;
+            }
+            
+            // Copy the data
+            memcpy(raw_data_copy, data_ptr, data_size);
+            
+            // Set output parameters
+            *raw_data = raw_data_copy;
+            *raw_data_size = data_size;
+            
+            std::cerr << "[RosParser] INFO: Successfully extracted " 
+                      << (is_compressed ? "compressed " : "") 
+                      << "image data (" << data_size << " bytes)" << std::endl;
+            
+        } catch (const std::exception& json_ex) {
+            std::string err = "Failed to convert metadata to JSON: " + std::string(json_ex.what());
+            if (error_msg) *error_msg = allocate_string(err.c_str());
+            std::cerr << "[RosParser] ERROR: " << err << std::endl;
+            members->fini_function(cpp_message_object);
+            free(cpp_message_object);
+            return ROS_PARSER_ERROR_SERIALIZATION;
+        }
+        
+        // Cleanup message object
+        members->fini_function(cpp_message_object);
+        free(cpp_message_object);
+        
+        return ROS_PARSER_SUCCESS;
+        
+    } catch (const std::exception& e) {
+        std::string err = "Unhandled exception in RosParser_ExtractImageData: " + std::string(e.what());
+        if (error_msg) *error_msg = allocate_string(err.c_str());
+        std::cerr << "[RosParser] FATAL: " << err << std::endl;
+        if (cpp_message_object && members) { 
+            members->fini_function(cpp_message_object); 
+            free(cpp_message_object); 
+        }
+        return ROS_PARSER_ERROR_UNKNOWN;
+    }
+}
+
 } // extern "C" 

@@ -62,7 +62,12 @@ func (p *TopicProcessor) ProcessRosMessage(ottMsg *message.OttMessage) (map[stri
 		return nil, fmt.Errorf("empty payload for topic '%s'", ottTopic)
 	}
 
-	// Parse the message using the ROS parser
+	// Special handling for image messages
+	if messageType == "sensor_msgs/msg/Image" || messageType == "sensor_msgs/msg/CompressedImage" {
+		return p.ProcessImageMessage(ottTopic, messageType, ottMsg.TimestampNs(), payloadBytes)
+	}
+
+	// Regular message processing for non-image types
 	p.logger.Debugf("Processing ROS message for topic '%s' (type: %s, %d bytes)",
 		ottTopic, messageType, len(payloadBytes))
 
@@ -78,6 +83,56 @@ func (p *TopicProcessor) ProcessRosMessage(ottMsg *message.OttMessage) (map[stri
 		"timestamp": ottMsg.TimestampNs(),
 		"data":      parsedMsg,
 	}
+
+	return result, nil
+}
+
+// ProcessImageMessage processes specifically image messages, extracting their metadata
+// separately from the raw image data for more efficient transport
+func (p *TopicProcessor) ProcessImageMessage(
+	ottTopic string,
+	messageType string,
+	timestamp int64,
+	payloadBytes []byte,
+) (map[string]interface{}, error) {
+	p.logger.Debugf("Processing image message for topic '%s' (type: %s, %d bytes)",
+		ottTopic, messageType, len(payloadBytes))
+
+	// Get the image data and metadata using the specialized function
+	imageData, err := ExtractImageData(messageType, payloadBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract image data for topic '%s': %w", ottTopic, err)
+	}
+
+	// Log some information about the image
+	isCompressed := messageType == "sensor_msgs/msg/CompressedImage"
+	if isCompressed {
+		if format, ok := imageData.Metadata["format"].(string); ok {
+			p.logger.Debugf("Image format: %s, size: %d bytes", format, len(imageData.RawData))
+		}
+	} else {
+		width, _ := imageData.Metadata["width"].(float64)
+		height, _ := imageData.Metadata["height"].(float64)
+		encoding, _ := imageData.Metadata["encoding"].(string)
+		p.logger.Debugf("Image dimensions: %dx%d, encoding: %s, size: %d bytes",
+			int(width), int(height), encoding, len(imageData.RawData))
+	}
+
+	// Add metadata and topic info (but don't include the raw data here)
+	result := map[string]interface{}{
+		"topic":     ottTopic,
+		"type":      messageType,
+		"timestamp": timestamp,
+		"metadata":  imageData.Metadata,
+		"is_image":  true,
+		"data_size": len(imageData.RawData),
+	}
+
+	// In a real implementation, we might do something like:
+	// 1. If using WebRTC: Send the raw image data as a video frame
+	//    webrtcManager.SendFrame(imageData.RawData, ottTopic, timestamp)
+	// 2. If raw web socket is available: Send the binary data separately
+	//    websocketManager.SendBinary(imageData.RawData, ottTopic, timestamp)
 
 	return result, nil
 }
