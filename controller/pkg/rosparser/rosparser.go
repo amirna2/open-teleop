@@ -195,7 +195,11 @@ func ParseToJSON(messageType string, messageData []byte) (map[string]interface{}
 	}
 
 	if logger != nil {
-		logger.Debugf("Successfully parsed ROS message to JSON")
+		if len(jsonStr) > 60 {
+			logger.Infof("Successfully parsed ROS message to JSON %s...", jsonStr[:60])
+		} else {
+			logger.Infof("Successfully parsed ROS message to JSON %s", jsonStr)
+		}
 	}
 	return result_map, nil
 }

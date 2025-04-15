@@ -120,7 +120,7 @@ class TopicManager:
             
             # Create a generic callback
             def callback(msg):
-                self.logger.info(f"Received message on {ros_topic}")
+                self.logger.debug(f"Received message on {ros_topic}")
                 self.handle_message(msg, ros_topic)
             
             # Create the subscriber using the dynamically resolved message type
@@ -207,11 +207,10 @@ class TopicManager:
 
             # Log the reply from the controller
             if reply_str:
-                self.logger.info(f"Received ACK/reply from controller: {reply_str[:100]}...")
+                self.logger.debug(f"Received ACK/reply from controller: {reply_str[:100]}...")
+                self.logger.info(f"Successfully forwarded message from {topic_name} to {ott_topic}")
             else:
                 self.logger.warning(f"Did not receive reply from controller for {ott_topic}")
-            
-            self.logger.info(f"Successfully forwarded message from {topic_name} to {ott_topic}")
             
         except Exception as e:
             self.logger.error(f"Error handling message from {topic_name} (type: {type(msg).__name__}): {e}")
