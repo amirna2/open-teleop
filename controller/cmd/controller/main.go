@@ -1,7 +1,8 @@
 package main
 
 import (
-	"context"
+	"context" // Added for WebSocket message parsing
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	// Added for WebSocket support
+	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
 	fiberlogger "github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
@@ -28,6 +31,18 @@ import (
 	// Import our ZeroMQ server
 	"github.com/open-teleop/controller/pkg/zeromq"
 )
+
+// --- Data Structures for WebSocket Messages ---
+type Vector3 struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	Z float64 `json:"z"`
+}
+
+type TwistMsg struct {
+	Linear  Vector3 `json:"linear"`
+	Angular Vector3 `json:"angular"`
+}
 
 func main() {
 	// Parse command line flags for initial setup
@@ -200,18 +215,27 @@ func main() {
 		// Use operational config for server behavior settings
 		ReadTimeout: time.Duration(cfg.Controller.Server.RequestTimeout) * time.Second,
 		BodyLimit:   cfg.Controller.Server.MaxRequestSize * 1024 * 1024, // Convert MB to bytes
+		IdleTimeout: 7 * time.Second,                                    // Add idle timeout slightly > shutdown timeout
 	})
 
 	// Add middleware
 	app.Use(fiberlogger.New())
 	app.Use(recover.New())
 
-	// --- Set up basic routes (uses operational config 'cfg') ---
-	app.Get("/", func(c *fiber.Ctx) error {
+	// --- Serve Static Files (Web UI) first ---
+	// Serve index.html from ./web/static for the root path
+	// Path is relative to the project root, as run_controller.sh executes from there.
+	app.Static("/", "controller/web/static", fiber.Static{
+		Index:         "index.html",
+		CacheDuration: 1 * time.Second, // Disable caching for dev
+	})
+
+	// --- Set up basic API routes (uses operational config 'cfg') ---
+	app.Get("/api/status", func(c *fiber.Ctx) error { // Changed route from / to /api/status
 		return c.JSON(fiber.Map{
 			"status":    "online",
-			"version":   cfg.Version,  // Operational config version
-			"config_id": cfg.ConfigID, // Operational config ID
+			"version":   cfg.Version,
+			"config_id": cfg.ConfigID,
 			"robot_id":  cfg.RobotID,
 		})
 	})
@@ -233,6 +257,58 @@ func main() {
 			"outbound_count": len(outboundTopics),
 		})
 	})
+
+	// --- WebSocket Route for Control ---
+	app.Use("/ws", func(c *fiber.Ctx) error { // Middleware to check if it's a WebSocket upgrade request
+		if websocket.IsWebSocketUpgrade(c) {
+			c.Locals("allowed", true)
+			return c.Next()
+		}
+		logger.Warnf("Non-websocket request to /ws endpoint from %s", c.IP())
+		return fiber.ErrUpgradeRequired
+	})
+
+	app.Get("/ws/control", websocket.New(func(conn *websocket.Conn) {
+		logger.Infof("Control WebSocket connected: %s", conn.RemoteAddr())
+		var (
+			mt  int
+			msg []byte
+			err error
+		)
+		for {
+			if mt, msg, err = conn.ReadMessage(); err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					logger.Errorf("Control WS read error: %v", err)
+				} else {
+					logger.Infof("Control WS connection closed normally: %v", err)
+				}
+				break // Exit loop on error/close
+			}
+			// logger.Debugf("Control WS message received (type %d): %s", mt, string(msg))
+
+			if mt == websocket.TextMessage {
+				var twist TwistMsg
+				if err := json.Unmarshal(msg, &twist); err != nil {
+					logger.Warnf("Failed to unmarshal Twist command from WS: %v. Message: %s", err, string(msg))
+					continue // Skip malformed message
+				}
+
+				// Log the received command
+				logger.Infof("Received Twist command via WS: LinearX=%.2f, AngularZ=%.2f", twist.Linear.X, twist.Angular.Z)
+
+				// --- Forwarding to MessageDirector (Deferred) ---
+				// ottTopic := "teleop.control.velocity"
+				// err := messageDirector.DirectMessage(ottTopic, msg, "WEBSOCKET_JSON")
+				// if err != nil {
+				//     logger.Errorf("Failed to direct message for topic %s: %v", ottTopic, err)
+				// }
+
+			} else {
+				logger.Infof("Ignoring non-text Control WS message type: %d", mt)
+			}
+		}
+		logger.Infof("Control WebSocket disconnected: %s", conn.RemoteAddr())
+	}))
 
 	// --- Start HTTP server in a goroutine ---
 	go func() {

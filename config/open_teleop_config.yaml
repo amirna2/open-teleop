@@ -20,6 +20,13 @@ topic_mappings:
     message_type: "sensor_msgs/msg/Image"
     direction: "OUTBOUND"
     source_type: "ROS2_CDR"
+    
+  - ros_topic: "/image/compressed"
+    ott: "teleop.sensor.image.compressed"
+    priority: "STANDARD"
+    message_type: "sensor_msgs/msg/CompressedImage"
+    direction: "OUTBOUND"
+    source_type: "ROS2_CDR"
 
   - ros_topic: "/string"
     ott: "teleop.status"
@@ -28,7 +35,7 @@ topic_mappings:
     direction: "OUTBOUND"
     source_type: "ROS2_CDR"
 
-  # Robot control (INBOUND - from controller to ROS)
+# Robot control (INBOUND - from controller to ROS)
   - ros_topic: "/cmd_vel"
     ott: "teleop.control.velocity"
     priority: "HIGH"

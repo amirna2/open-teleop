@@ -1,0 +1,57 @@
+body {
+    font-family: sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+    /* Ensure body takes up height for joystick detection */
+    min-height: 100vh;
+    box-sizing: border-box;
+}
+
+#joystick-container {
+    width: 200px; /* Overall container size */
+    height: 200px;
+    margin-top: 20px;
+    margin-bottom: 20px;
+    display: flex; /* Use flexbox to center the base */
+    justify-content: center;
+    align-items: center;
+    border: 1px solid #ccc; /* Optional: visual guide for container */
+    border-radius: 50%;
+    box-sizing: border-box;
+}
+
+#joystick-base {
+    width: 180px; /* Slightly smaller than container */
+    height: 180px;
+    background-color: #e0e0e0;
+    border-radius: 50%;
+    position: relative; /* Positioning context for the handle */
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.2);
+}
+
+#joystick-handle {
+    width: 80px; /* Size of the draggable handle */
+    height: 80px;
+    background-color: #6495ED; /* Cornflower blue */
+    border-radius: 50%;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%); /* Center handle in base */
+    cursor: grab;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    border: 2px solid #4682B4; /* Steel blue border */
+}
+
+#joystick-handle:active {
+    cursor: grabbing;
+    background-color: #4169E1; /* Royal blue when active */
+}
+
+#status {
+    margin-top: 10px;
+    font-style: italic;
+    color: #555;
+}
