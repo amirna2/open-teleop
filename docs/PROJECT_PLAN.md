@@ -53,6 +53,7 @@ For a minimal viable implementation of this robotics teleoperation platform, I w
 - Verify core communication pipeline (Gateway -> Controller) for general message flow. (Verified)
 - Test end-to-end teleop command path (Controller -> Gateway -> Robot) once implemented (Phase 3). (Pending)
 - Test basic system functionality using both deployment strategies (single container via `Dockerfile.runtime`, multi-container via `docker-compose`). (Pending)
+- Develop Minimal Web UI for Testing: Implement a basic static HTML/JavaScript frontend served directly by the Go controller (Fiber). This UI will use REST APIs and WebSockets provided by the controller to facilitate end-to-end testing (e.g., visualizing data flow, sending basic commands) and serve as a foundation for potential future admin/diagnostic panels. (Pending)
 - Utilize a simple robot simulator for testing if a physical robot is unavailable. (Ongoing Approach)
 
 ### Future Phases (Post-MVP)
