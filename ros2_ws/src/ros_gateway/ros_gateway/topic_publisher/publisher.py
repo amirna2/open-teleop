@@ -90,40 +90,30 @@ class TopicPublisher:
             self.logger.debug(f"TopicPublisher: Processing message for topic: {topic}")
             self.logger.debug(f"TopicPublisher: Available publishers: {list(self.publishers.keys())}")
             
-            # For testing, specifically handle velocity commands
-            if topic == 'teleop.control.velocity':
-                if topic in self.publishers:
-                    data = message_dict.get('data', {})
+            if topic in self.publishers:
+                data = message_dict.get('data', {})
+                
+                # Log the data in more detail
+                self.logger.debug(f"TopicPublisher: Message data: {json.dumps(data)}")
+                
+                # Find the corresponding mapping for this topic
+                mapping = next((m for m in self.topic_mappings if m['ott'] == topic), None)
+                
+                if mapping:
+                    # Convert JSON data to ROS message using the message_converter
+                    ros_message = self.message_converter.convert_to_ros_message(
+                        mapping['message_type'], 
+                        data
+                    )
                     
-                    # Log the data in more detail
-                    self.logger.debug(f"TopicPublisher: Message data: {json.dumps(data)}")
-                    
-                    # Create a Twist message
-                    twist = Twist()
-                    
-                    # Set linear velocities
-                    linear = data.get('linear', {})
-                    twist.linear.x = float(linear.get('x', 0.0))
-                    twist.linear.y = float(linear.get('y', 0.0))
-                    twist.linear.z = float(linear.get('z', 0.0))
-                    
-                    # Set angular velocities
-                    angular = data.get('angular', {})
-                    twist.angular.x = float(angular.get('x', 0.0))
-                    twist.angular.y = float(angular.get('y', 0.0))
-                    twist.angular.z = float(angular.get('z', 0.0))
-                    
-                    # Log the Twist message we're about to publish
-                    self.logger.debug(f"TopicPublisher: Publishing Twist message to /cmd_vel:")
-                    self.logger.debug(f"  - linear: x={twist.linear.x:.2f}, y={twist.linear.y:.2f}, z={twist.linear.z:.2f}")
-                    self.logger.debug(f"  - angular: x={twist.angular.x:.2f}, y={twist.angular.y:.2f}, z={twist.angular.z:.2f}")
-                    
-                    # Publish the message
-                    self.publishers[topic].publish(twist)
-                    self.logger.debug("TopicPublisher: Message published successfully to /cmd_vel")
+                    # Publish the converted message
+                    self.publishers[topic].publish(ros_message)
+                    self.logger.debug(f"TopicPublisher: Message published successfully to {mapping['ros_topic']}")
                 else:
-                    self.logger.warning(f"TopicPublisher: No publisher found for topic: {topic}")
-                    self.logger.debug(f"TopicPublisher: Available publishers: {list(self.publishers.keys())}")
+                    self.logger.warning(f"TopicPublisher: No mapping configuration found for topic: {topic}")
+            else:
+                self.logger.warning(f"TopicPublisher: No publisher found for topic: {topic}")
+                self.logger.debug(f"TopicPublisher: Available publishers: {list(self.publishers.keys())}")
         
         except json.JSONDecodeError as e:
             self.logger.error(f"TopicPublisher: Failed to parse message as JSON: {ott_message}")

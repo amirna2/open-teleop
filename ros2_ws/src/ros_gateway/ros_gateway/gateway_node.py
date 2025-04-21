@@ -97,7 +97,7 @@ class RosGateway(Node):
         self.logger.info(f'Using bootstrap config file: {config_path}')
 
         # Initialize the message converter
-        self.converter = MessageConverter()
+        self.converter = MessageConverter(logger=self.logger)
 
         # Get ZeroMQ configuration (ENV > YAML > Default)
         zmq_config = self.bootstrap_config.get('gateway', {}).get('zmq', {})
