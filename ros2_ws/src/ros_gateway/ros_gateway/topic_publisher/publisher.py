@@ -54,9 +54,10 @@ class TopicPublisher:
         self.logger.info(f"Successfully set up {len(self.publishers)} publishers")
         self.logger.info(f"Available publisher keys: {list(self.publishers.keys())}")
         
-        # Now actually start receiving messages for testing
-        self.logger.info("Starting to receive messages on 'teleop.control.' topic prefix")
-        self.zmq_client.start_receiving("teleop.control.", self.handle_controller_message)
+        # Only subscribe if we have publishers to handle messages
+        if self.publishers:
+            self.logger.info("Starting to receive messages on 'teleop.control.' topic prefix")
+            self.zmq_client.start_receiving("teleop.control.", self.handle_controller_message)
     
     def handle_controller_message(self, ott_message):
         """

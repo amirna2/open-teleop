@@ -14,10 +14,7 @@ document.addEventListener('DOMContentLoaded', (event) => {
     let lastSentLinear = 0;
     let lastSentAngular = 0;
 
-    const baseRect = joystickBase.getBoundingClientRect();
-    const baseRadius = baseRect.width / 2;
     const handleRadius = joystickHandle.offsetWidth / 2;
-    const maxHandleDisplacement = baseRadius - handleRadius;
 
     // --- WebSocket Connection ---
     function connectWebSocket() {
@@ -86,6 +83,11 @@ document.addEventListener('DOMContentLoaded', (event) => {
 
     function handleDrag(e) {
         if (!isDragging) return;
+
+        // Get fresh base position
+        const baseRect = joystickBase.getBoundingClientRect();
+        const baseRadius = baseRect.width / 2;
+        const maxHandleDisplacement = baseRadius - handleRadius;
 
         let clientX, clientY;
         if (e.type.startsWith('touch')) {
