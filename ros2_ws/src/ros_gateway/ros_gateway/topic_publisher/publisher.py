@@ -97,15 +97,15 @@ class TopicPublisher:
                     
                     # Set linear velocities
                     linear = data.get('linear', {})
-                    twist.linear.x = linear.get('x', 0.0)
-                    twist.linear.y = linear.get('y', 0.0)
-                    twist.linear.z = linear.get('z', 0.0)
+                    twist.linear.x = float(linear.get('x', 0.0))
+                    twist.linear.y = float(linear.get('y', 0.0))
+                    twist.linear.z = float(linear.get('z', 0.0))
                     
                     # Set angular velocities
                     angular = data.get('angular', {})
-                    twist.angular.x = angular.get('x', 0.0)
-                    twist.angular.y = angular.get('y', 0.0)
-                    twist.angular.z = angular.get('z', 0.0)
+                    twist.angular.x = float(angular.get('x', 0.0))
+                    twist.angular.y = float(angular.get('y', 0.0))
+                    twist.angular.z = float(angular.get('z', 0.0))
                     
                     # Log the Twist message we're about to publish
                     self.logger.info(f"TopicPublisher: Publishing Twist message to /cmd_vel:")

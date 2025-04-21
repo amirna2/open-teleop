@@ -6,15 +6,22 @@ import (
 	customlog "github.com/open-teleop/controller/pkg/log"
 )
 
-// LoggingResultHandler logs processing results and could deliver them to clients
+// MessagePublisher defines the interface for publishing messages
+type MessagePublisher interface {
+	PublishMessage(topic string, data []byte) error
+}
+
+// LoggingResultHandler logs processing results and publishes them to ZMQ
 type LoggingResultHandler struct {
-	logger customlog.Logger
+	logger    customlog.Logger
+	publisher MessagePublisher
 }
 
 // NewLoggingResultHandler creates a new logging result handler
-func NewLoggingResultHandler(logger customlog.Logger) *LoggingResultHandler {
+func NewLoggingResultHandler(logger customlog.Logger, publisher MessagePublisher) *LoggingResultHandler {
 	return &LoggingResultHandler{
-		logger: logger,
+		logger:    logger,
+		publisher: publisher,
 	}
 }
 
@@ -40,10 +47,16 @@ func (h *LoggingResultHandler) HandleResult(result *ProcessResult) {
 				h.logger.Debugf("Data: %s", string(jsonData))
 			}
 		}
-	}
 
-	// TODO: In the future, this could deliver the processed data to clients
-	// For now, we just log it
+		// Publish the processed message
+		if h.publisher != nil {
+			if err := h.publisher.PublishMessage(result.Topic, jsonData); err != nil {
+				h.logger.Errorf("Failed to publish message for topic '%s': %v", result.Topic, err)
+			} else {
+				h.logger.Debugf("Published message for topic '%s'", result.Topic)
+			}
+		}
+	}
 }
 
 // CreateHandlerFunc creates a ResultHandler function for the ProcessingPool

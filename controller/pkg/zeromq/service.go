@@ -506,7 +506,11 @@ type ZeroMQService struct {
 	logger     customlog.Logger
 	running    bool
 	wg         *sync.WaitGroup
+	mutex      sync.RWMutex
 }
+
+// Ensure ZeroMQService implements MessagePublisher
+var _ processing.MessagePublisher = (*ZeroMQService)(nil)
 
 // NewZeroMQService creates a new ZeroMQService
 // Accepts specific bind addresses from bootstrap config and the operational zeromq config.
@@ -614,12 +618,20 @@ func (s *ZeroMQService) Stop() {
 	s.logger.Infof("ZeroMQ service stopped")
 }
 
-// PublishMessage sends a message with the given topic
-func (s *ZeroMQService) PublishMessage(topic string, message []byte) error {
+// PublishMessage publishes a message to a topic
+func (s *ZeroMQService) PublishMessage(topic string, data []byte) error {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
 	if !s.running {
-		return ErrServiceClosed
+		return errors.New("service not running")
 	}
-	return s.sender.PublishMessage(topic, message)
+
+	if s.sender == nil {
+		return errors.New("sender not initialized")
+	}
+
+	return s.sender.PublishMessage(topic, data)
 }
 
 // PublishJSON publishes a JSON-serializable message with the given topic

@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"encoding/json"
 	"fmt"
 
 	message "github.com/open-teleop/controller/pkg/flatbuffers/open_teleop/message"
@@ -38,12 +39,45 @@ func (p *RosMessageProcessor) ProcessMessage(ottMsg *message.OttMessage) (map[st
 		return nil, fmt.Errorf("empty payload for topic '%s'", topic)
 	}
 
+	// Check if this is a JSON command (e.g., joystick/teleop commands)
+	if ottMsg.ContentType() == message.ContentTypeJSON_COMMAND {
+		// For JSON commands, parse the JSON directly without ROS parsing
+		var jsonData map[string]interface{}
+		if err := json.Unmarshal(payloadBytes, &jsonData); err != nil {
+			return nil, fmt.Errorf("failed to parse JSON command for topic '%s': %w", topic, err)
+		}
+
+		// For Twist messages, ensure numeric values are properly formatted
+		if messageType == "geometry_msgs/msg/Twist" {
+			if linear, ok := jsonData["linear"].(map[string]interface{}); ok {
+				for k, v := range linear {
+					if num, ok := v.(float64); ok {
+						linear[k] = float64(num)
+					}
+				}
+			}
+			if angular, ok := jsonData["angular"].(map[string]interface{}); ok {
+				for k, v := range angular {
+					if num, ok := v.(float64); ok {
+						angular[k] = float64(num)
+					}
+				}
+			}
+		}
+
+		// Return in the exact format expected by ROS Gateway
+		return map[string]interface{}{
+			"topic": topic,
+			"data":  jsonData,
+		}, nil
+	}
+
 	// Special handling for image messages
 	if messageType == "sensor_msgs/msg/Image" || messageType == "sensor_msgs/msg/CompressedImage" {
 		return p.ProcessImageMessage(topic, messageType, ottMsg.TimestampNs(), payloadBytes)
 	}
 
-	// Parse the message using the ROS parser
+	// For all other messages, use the ROS parser
 	p.logger.Debugf("Processing ROS message for topic '%s' (type: %s, %d bytes)",
 		topic, messageType, len(payloadBytes))
 

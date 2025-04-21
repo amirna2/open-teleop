@@ -2,7 +2,6 @@ package main
 
 import (
 	"context" // Added for WebSocket message parsing
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -30,19 +29,9 @@ import (
 	"github.com/open-teleop/controller/pkg/rosparser"
 	// Import our ZeroMQ server
 	"github.com/open-teleop/controller/pkg/zeromq"
+	// Import our new API handlers
+	"github.com/open-teleop/controller/pkg/api"
 )
-
-// --- Data Structures for WebSocket Messages ---
-type Vector3 struct {
-	X float64 `json:"x"`
-	Y float64 `json:"y"`
-	Z float64 `json:"z"`
-}
-
-type TwistMsg struct {
-	Linear  Vector3 `json:"linear"`
-	Angular Vector3 `json:"angular"`
-}
 
 func main() {
 	// Parse command line flags for initial setup
@@ -169,7 +158,7 @@ func main() {
 
 	// --- Create Result Handler ---
 	logger.Infof("Creating Result Handler")
-	resultHandler := processing.NewLoggingResultHandler(logger)
+	resultHandler := processing.NewLoggingResultHandler(logger, zmqService)
 
 	// --- Initialize and configure Message Director (uses operational config 'cfg') ---
 	logger.Infof("Initializing Message Director")
@@ -269,45 +258,8 @@ func main() {
 	})
 
 	app.Get("/ws/control", websocket.New(func(conn *websocket.Conn) {
-		logger.Infof("Control WebSocket connected: %s", conn.RemoteAddr())
-		var (
-			mt  int
-			msg []byte
-			err error
-		)
-		for {
-			if mt, msg, err = conn.ReadMessage(); err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					logger.Errorf("Control WS read error: %v", err)
-				} else {
-					logger.Infof("Control WS connection closed normally: %v", err)
-				}
-				break // Exit loop on error/close
-			}
-			// logger.Debugf("Control WS message received (type %d): %s", mt, string(msg))
-
-			if mt == websocket.TextMessage {
-				var twist TwistMsg
-				if err := json.Unmarshal(msg, &twist); err != nil {
-					logger.Warnf("Failed to unmarshal Twist command from WS: %v. Message: %s", err, string(msg))
-					continue // Skip malformed message
-				}
-
-				// Log the received command
-				logger.Infof("Received Twist command via WS: LinearX=%.2f, AngularZ=%.2f", twist.Linear.X, twist.Angular.Z)
-
-				// --- Forwarding to MessageDirector (Deferred) ---
-				// ottTopic := "teleop.control.velocity"
-				// err := messageDirector.DirectMessage(ottTopic, msg, "WEBSOCKET_JSON")
-				// if err != nil {
-				//     logger.Errorf("Failed to direct message for topic %s: %v", ottTopic, err)
-				// }
-
-			} else {
-				logger.Infof("Ignoring non-text Control WS message type: %d", mt)
-			}
-		}
-		logger.Infof("Control WebSocket disconnected: %s", conn.RemoteAddr())
+		// Call the handler from the api package, passing dependencies
+		api.ControlWebSocketHandler(conn, logger, messageDirector, topicRegistry)
 	}))
 
 	// --- Start HTTP server in a goroutine ---

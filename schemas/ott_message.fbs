@@ -5,6 +5,7 @@ namespace open_teleop.message;
 
 enum ContentType : byte {
   ROS2_MESSAGE = 0,                               // Standard ROS2 message (serialized in CDR)
+  JSON_COMMAND = 1                                // Generic JSON command (e.g., Twist from UI)
   // Other types can be added later as the platform evolves
 }
 
