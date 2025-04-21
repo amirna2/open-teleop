@@ -33,6 +33,8 @@ class ZmqClient:
         self.callbacks = {}
         self.running = False
         self.receive_thread = None
+        self._init_lock = threading.Lock()
+        self._initialized = False
         
         # Set up ZMQ context
         self.context = zmq.Context()
@@ -47,20 +49,29 @@ class ZmqClient:
     
     def _initialize_sockets(self):
         """Initialize ZeroMQ sockets"""
-        # REQ socket for request-reply pattern
-        self.req_socket = self.context.socket(zmq.REQ)
-        self.req_socket.connect(self.controller_address)
-        
-        # SUB socket for subscription pattern
-        self.sub_socket = self.context.socket(zmq.SUB)
-        
-        # Connect to the controller's publisher port
-        self.sub_socket.connect(self.publish_address)
-        if self.logger:
-            self.logger.info(f"ZmqClient: Connected sub socket to {self.publish_address}")
-        
-        if self.logger:
-            self.logger.info(f"ZmqClient: Sockets initialized and connected")
+        with self._init_lock:
+            if self._initialized:
+                return
+                
+            try:
+                # REQ socket for request-reply pattern
+                self.req_socket = self.context.socket(zmq.REQ)
+                self.req_socket.connect(self.controller_address)
+                
+                # SUB socket for subscription pattern
+                self.sub_socket = self.context.socket(zmq.SUB)
+                
+                # Connect to the controller's publisher port
+                self.sub_socket.connect(self.publish_address)
+                
+                self._initialized = True
+                
+                if self.logger:
+                    self.logger.info(f"ZmqClient: Sockets initialized and connected")
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(f"ZmqClient: Failed to initialize sockets: {e}")
+                raise
     
     def send_message(self, topic, message):
         """
@@ -73,6 +84,10 @@ class ZmqClient:
         Returns:
             Reply message from the controller
         """
+        with self._init_lock:
+            if not self._initialized:
+                self._initialize_sockets()
+                
         if not isinstance(message, str):
             message = json.dumps(message)
             
@@ -161,21 +176,26 @@ class ZmqClient:
             topic: Topic to subscribe to (e.g., "teleop.control.velocity")
             callback: Function to call when a message is received
         """
-        if teleop_topic not in self.callbacks:
-            self.callbacks[teleop_topic] = []
-        
-        self.callbacks[teleop_topic].append(callback)
-        
-        # Subscribe to the topic
-        self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, teleop_topic)
-        
-        if self.logger:
-            self.logger.info(f"ZmqClient: Subscribed to message on teleop-topic: {teleop_topic}")
-        
-        if not self.running:
-            self.running = True
-            self.receive_thread = threading.Thread(target=self._receive_loop, daemon=True)
-            self.receive_thread.start()
+        with self._init_lock:
+            if not self._initialized:
+                self._initialize_sockets()
+                
+            if teleop_topic not in self.callbacks:
+                self.callbacks[teleop_topic] = []
+            
+            self.callbacks[teleop_topic].append(callback)
+            
+            # Subscribe to the topic
+            self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, teleop_topic)
+            
+            if self.logger:
+                self.logger.info(f"ZmqClient: Subscribed to message on teleop-topic: {teleop_topic}")
+            
+            if not self.running:
+                self.running = True
+                # Make the thread non-daemon to prevent abrupt termination
+                self.receive_thread = threading.Thread(target=self._receive_loop)
+                self.receive_thread.start()
     
     def subscribe_to_config_updates(self, callback):
         """

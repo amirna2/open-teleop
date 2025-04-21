@@ -56,8 +56,13 @@ class TopicPublisher:
         
         # Only subscribe if we have publishers to handle messages
         if self.publishers:
-            self.logger.info("Starting to receive messages on 'teleop.control.' topic prefix")
-            self.zmq_client.start_receiving("teleop.control.", self.handle_controller_message)
+            try:
+                self.logger.info("Starting to receive messages on 'teleop.control.' topic prefix")
+                # Ensure ZeroMQ client is initialized before starting to receive
+                self.zmq_client.start_receiving("teleop.control.", self.handle_controller_message)
+            except Exception as e:
+                self.logger.error(f"Failed to start receiving messages: {e}")
+                raise
     
     def handle_controller_message(self, ott_message):
         """
