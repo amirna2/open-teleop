@@ -92,14 +92,14 @@ class ZmqClient:
             message = json.dumps(message)
             
         if self.logger:
-            self.logger.info(f"ZmqClient: Sending message to {topic}: {message[:100]}...")
+            self.logger.debug(f"ZmqClient: Sending message to {topic}: {message[:100]}...")
         
         try:
             self.req_socket.send_string(message)
             reply = self.req_socket.recv_string()
             
             if self.logger:
-                self.logger.info(f"ZmqClient: Received reply: {reply[:100]}...")
+                self.logger.debug(f"ZmqClient: Received reply: {reply[:100]}...")
                 
             return reply
         except zmq.ZMQError as e:
@@ -240,8 +240,8 @@ class ZmqClient:
                     message = self.sub_socket.recv_string()
                     
                     if self.logger:
-                        self.logger.info(f"ZmqClient: Received message on topic {topic}")
-                        self.logger.info(f"ZmqClient: Message content: {message[:100]}...")
+                        self.logger.debug(f"ZmqClient: Received message on topic {topic}")
+                        self.logger.debug(f"ZmqClient: Message content: {message[:100]}...")
                     
                     # Find matching topic callbacks
                     processed = False
@@ -249,7 +249,7 @@ class ZmqClient:
                         if topic.startswith(registered_topic):
                             processed = True
                             if self.logger:
-                                self.logger.info(f"ZmqClient: Processing message for topic {topic} (matches {registered_topic})")
+                                self.logger.debug(f"ZmqClient: Processing message for topic {topic} (matches {registered_topic})")
                             for callback in callbacks:
                                 try:
                                     callback(message)
@@ -268,11 +268,17 @@ class ZmqClient:
                 if self.logger:
                     self.logger.error(f"ZmqClient: Error in receive loop: {e}")
                 time.sleep(0.1)  # Short sleep to avoid tight loop on error
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(f"ZmqClient: Unexpected error in receive loop: {e}")
+                    import traceback
+                    self.logger.error(traceback.format_exc())
+                time.sleep(0.1)  # Short sleep to avoid tight loop on error
     
     def shutdown(self):
-        """Shutdown the client and clean up resources."""
+        """Shutdown the ZeroMQ client."""
         if self.logger:
-            self.logger.info("ZmqClient: Shutting down")
+            self.logger.info("ZmqClient: shutting down")
         
         self.running = False
         
@@ -285,4 +291,8 @@ class ZmqClient:
         if self.sub_socket:
             self.sub_socket.close()
         
-        self.context.term() 
+        if self.context:
+            self.context.term()
+        
+        if self.logger:
+            self.logger.info("ZmqClient: shutdown complete") 

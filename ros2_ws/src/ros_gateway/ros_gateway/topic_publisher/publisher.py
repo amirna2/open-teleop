@@ -73,13 +73,13 @@ class TopicPublisher:
         """
         try:
             # Log the raw message with more details
-            self.logger.info(f"TopicPublisher: Received raw message: {ott_message}")
+            self.logger.debug(f"TopicPublisher: Received raw message: {ott_message}")
             
             # Parse the message
             message_dict = json.loads(ott_message)
             
             # Log the parsed message structure
-            self.logger.info(f"TopicPublisher: Parsed message keys: {list(message_dict.keys())}")
+            self.logger.debug(f"TopicPublisher: Parsed message keys: {list(message_dict.keys())}")
             
             topic = message_dict.get('topic')
             
@@ -87,8 +87,8 @@ class TopicPublisher:
                 self.logger.warning("TopicPublisher: Received message with no topic field")
                 return
             
-            self.logger.info(f"TopicPublisher: Processing message for topic: {topic}")
-            self.logger.info(f"TopicPublisher: Available publishers: {list(self.publishers.keys())}")
+            self.logger.debug(f"TopicPublisher: Processing message for topic: {topic}")
+            self.logger.debug(f"TopicPublisher: Available publishers: {list(self.publishers.keys())}")
             
             # For testing, specifically handle velocity commands
             if topic == 'teleop.control.velocity':
@@ -96,7 +96,7 @@ class TopicPublisher:
                     data = message_dict.get('data', {})
                     
                     # Log the data in more detail
-                    self.logger.info(f"TopicPublisher: Message data: {json.dumps(data)}")
+                    self.logger.debug(f"TopicPublisher: Message data: {json.dumps(data)}")
                     
                     # Create a Twist message
                     twist = Twist()
@@ -114,16 +114,16 @@ class TopicPublisher:
                     twist.angular.z = float(angular.get('z', 0.0))
                     
                     # Log the Twist message we're about to publish
-                    self.logger.info(f"TopicPublisher: Publishing Twist message to /cmd_vel:")
-                    self.logger.info(f"  - linear: x={twist.linear.x:.2f}, y={twist.linear.y:.2f}, z={twist.linear.z:.2f}")
-                    self.logger.info(f"  - angular: x={twist.angular.x:.2f}, y={twist.angular.y:.2f}, z={twist.angular.z:.2f}")
+                    self.logger.debug(f"TopicPublisher: Publishing Twist message to /cmd_vel:")
+                    self.logger.debug(f"  - linear: x={twist.linear.x:.2f}, y={twist.linear.y:.2f}, z={twist.linear.z:.2f}")
+                    self.logger.debug(f"  - angular: x={twist.angular.x:.2f}, y={twist.angular.y:.2f}, z={twist.angular.z:.2f}")
                     
                     # Publish the message
                     self.publishers[topic].publish(twist)
-                    self.logger.info("TopicPublisher: Message published successfully to /cmd_vel")
+                    self.logger.debug("TopicPublisher: Message published successfully to /cmd_vel")
                 else:
                     self.logger.warning(f"TopicPublisher: No publisher found for topic: {topic}")
-                    self.logger.info(f"TopicPublisher: Available publishers: {list(self.publishers.keys())}")
+                    self.logger.debug(f"TopicPublisher: Available publishers: {list(self.publishers.keys())}")
         
         except json.JSONDecodeError as e:
             self.logger.error(f"TopicPublisher: Failed to parse message as JSON: {ott_message}")
