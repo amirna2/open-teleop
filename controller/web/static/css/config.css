@@ -1,1 +1,35 @@
 /* Styles specific to the Configuration tab content */ 
+
+#config {
+    /* Set a fixed width for the container to stabilize centering */
+    width: 85ch; /* Slightly wider than textarea/status for padding */
+    max-width: 100%; /* Prevent overflow on very small screens */
+    box-sizing: border-box;
+    /* Ensure content within flows naturally */
+    display: flex;
+    flex-direction: column;
+    align-items: center; /* Center items like textarea/buttons within */
+}
+
+#config-yaml {
+    margin-top: 10px;
+    margin-bottom: 10px;
+    font-family: monospace; /* Use monospace font for YAML */
+    border: 1px solid #ccc;
+    padding: 8px;
+    width: 80ch; /* Match cols=80 approximately */
+    box-sizing: border-box; /* Include padding and border in width */
+}
+
+#config-status {
+    margin-top: 10px;
+    /* Constrain width to prevent layout shifts */
+    max-width: 80ch; /* Match textarea width */
+    min-height: 1.2em; /* Prevent collapsing */
+    /* Ensure long text wraps */
+    overflow-wrap: break-word;
+    word-wrap: break-word; /* Legacy fallback */
+    /* Explicitly align text left within its container */
+    text-align: left;
+    /* Retain existing color styles set by JS */
+} 

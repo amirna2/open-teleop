@@ -45,7 +45,23 @@ Let's aim for a balance: Implement **Alternative 1 (Full Config Push)** for its 
     *   The Fiber handler for the `PUT` endpoint will receive the YAML string.
     *   It will pass this string to a dedicated `ConfigurationService`.
     *   The `ConfigurationService` will be responsible for:
-        *   Parsing and validating the YAML.
+        *   Parsing and validating# config/controller-config.yaml
+# Bootstrap configuration for the Open-Teleop Controller
+
+logging:
+  level: "INFO" # Options: DEBUG, INFO, WARN, ERROR
+  log_path: "/tmp/open_teleop_logs"
+  
+server:
+  # Port for the controller's internal HTTP server (e.g., for admin API / healthchecks)
+  http_port: 8080 
+
+zeromq:
+  # Address the controller binds to for receiving requests (e.g., from gateway)
+  request_bind_address: "tcp://*:5555" 
+  # Address the controller binds to for publishing messages (e.g., config updates, commands)
+  publish_bind_address: "tcp://*:5556"
+   the YAML.
         *   Comparing it with the currently loaded configuration.
         *   If changed, updating the in-memory configuration representation.
         *   Persisting the new configuration (e.g., overwriting `config/teleop_config.yaml`).

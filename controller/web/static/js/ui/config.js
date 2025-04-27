@@ -20,8 +20,32 @@ function initConfig() {
     saveBtn.addEventListener('click', saveConfigFromTextArea);
 
      // Initial state for status
-     configStatus.textContent = 'Ready';
+     configStatus.textContent = 'Ready. Start typing or load config.';
      configStatus.style.color = 'inherit';
+
+    // Add live validation on input
+    configTextArea.addEventListener('input', (event) => {
+        const yamlContent = event.target.value;
+        if (!yamlContent.trim()) {
+            // Handle empty input: clear status or set a specific message
+            configStatus.textContent = 'Ready. Start typing or load config.';
+            configStatus.style.color = 'inherit';
+            return;
+        }
+        try {
+            jsyaml.load(yamlContent); // Attempt to parse
+            configStatus.textContent = 'YAML syntax is valid.';
+            configStatus.style.color = 'green';
+        } catch (e) {
+            // Display simplified error message
+            configStatus.textContent = `YAML Syntax Error: ${e.reason || e.message}`;
+            if (e.mark && e.mark.line) {
+                 // Add line number if available
+                configStatus.textContent += ` at line ${e.mark.line + 1}`;
+            }
+            configStatus.style.color = 'red';
+        }
+    });
 }
 
 async function loadConfigIntoTextArea() {
