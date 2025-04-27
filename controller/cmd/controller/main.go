@@ -31,6 +31,8 @@ import (
 	"github.com/open-teleop/controller/pkg/zeromq"
 	// Import our new API handlers
 	"github.com/open-teleop/controller/pkg/api"
+	// Import our new services package
+	"github.com/open-teleop/controller/services"
 )
 
 func main() {
@@ -100,18 +102,25 @@ func main() {
 	}
 	logger.Infof("Logger initialized: Level=%s, Directory='%s'", finalLogLevel, finalLogPath)
 
-	// --- Load Operational Configuration (open_teleop_config.yaml) ---
-	// Expect the operational config file to be in the same directory as the bootstrap config.
+	// --- Initialize Teleop Configuration Service ---
 	operationalConfigPath := filepath.Join(*configDir, bootstrapCfg.Data.TeleopConfigFilename)
-	logger.Infof("Attempting to load operational configuration from: %s", operationalConfigPath)
-
-	cfg, err := config.LoadConfig(operationalConfigPath) // Use the basic loader
+	logger.Infof("Initializing Teleop Configuration Service for: %s", operationalConfigPath)
+	teleopConfigService, err := services.NewTeleopConfigService(operationalConfigPath, logger)
 	if err != nil {
-		logger.Fatalf("Failed to load operational configuration: %v", err)
+		// Although the service allows creation on initial load error, we might need the config for essential setup.
+		logger.Warnf("Error initializing TeleopConfigService: %v. Proceeding, but operational config might be missing.", err)
+	}
+
+	// --- Get Initial Operational Configuration ---
+	cfg := teleopConfigService.GetCurrentConfig() // Get the config loaded by the service
+	if cfg == nil {
+		// Decide how critical this is. If essential components need it, we should probably exit.
+		// For now, log a fatal error if the config is nil after service initialization attempt.
+		logger.Fatalf("Failed to load initial operational configuration from %s. Cannot proceed without configuration.", operationalConfigPath)
 	}
 
 	// Log the configuration details (using operational config 'cfg')
-	logger.Infof("Loaded operational configuration")
+	logger.Infof("Loaded initial operational configuration")
 	logger.Infof("Operational Config ID: %s, Version: %s", cfg.ConfigID, cfg.Version)
 	logger.Infof("Robot ID: %s", cfg.RobotID)
 
@@ -138,10 +147,11 @@ func main() {
 		logger.Fatalf("Failed to initialize ZeroMQ service: %v", err)
 	}
 
-	// --- Initialize Topic Registry (uses operational config 'cfg') ---
+	// --- Initialize Topic Registry (uses initial operational config 'cfg') ---
 	logger.Infof("Initializing Topic Registry")
 	topicRegistry := processing.NewTopicRegistry(logger)
-	topicRegistry.LoadFromConfig(cfg)
+	topicRegistry.LoadFromConfig(cfg) // Load with initial config
+	// NOTE: TopicRegistry will NOT automatically update if config changes via API unless explicitly reloaded.
 
 	// --- Initialize ROS Parser ---
 	logger.Infof("Initializing ROS Parser")
@@ -160,12 +170,14 @@ func main() {
 	logger.Infof("Creating Result Handler")
 	resultHandler := processing.NewLoggingResultHandler(logger, zmqService)
 
-	// --- Initialize and configure Message Director (uses operational config 'cfg') ---
+	// --- Initialize and configure Message Director (uses initial operational config 'cfg') ---
 	logger.Infof("Initializing Message Director")
 	directorOptions := &processing.DirectorOptions{
 		DefaultQueueSize: 1000, // TODO: Consider making this configurable (perhaps via bootstrap?)
 	}
-	messageDirector := processing.NewMessageDirector(cfg, logger, topicRegistry, directorOptions)
+	messageDirector := processing.NewMessageDirector(cfg, logger, topicRegistry, directorOptions) // Uses initial config
+	// NOTE: MessageDirector will NOT automatically update if config changes via API unless explicitly reloaded.
+
 	// Initialize with worker counts from bootstrap config
 	messageDirector.Initialize(
 		bootstrapCfg.Processing.HighPriorityWorkers,
@@ -183,8 +195,9 @@ func main() {
 	// Start the Message Director
 	messageDirector.Start()
 
-	// --- Register configuration handlers and publisher (uses operational config 'cfg') ---
-	configPublisher := zeromq.RegisterConfigHandlers(zmqService, cfg, logger)
+	// --- Register configuration handlers and publisher (uses initial operational config 'cfg') ---
+	configPublisher := zeromq.RegisterConfigHandlers(zmqService, cfg, logger) // Uses initial config
+	// NOTE: ZMQ Handlers/Publisher will NOT automatically update if config changes via API unless explicitly reloaded/re-registered.
 
 	// --- Start the ZeroMQ service ---
 	if err := zmqService.Start(); err != nil {
@@ -201,7 +214,7 @@ func main() {
 	app := fiber.New(fiber.Config{
 		AppName:      "Open-Teleop Controller",
 		ErrorHandler: customErrorHandler,
-		// Use operational config for server behavior settings
+		// Use operational config for server behavior settings - uses initial config
 		ReadTimeout: time.Duration(cfg.Controller.Server.RequestTimeout) * time.Second,
 		BodyLimit:   cfg.Controller.Server.MaxRequestSize * 1024 * 1024, // Convert MB to bytes
 		IdleTimeout: 7 * time.Second,                                    // Add idle timeout slightly > shutdown timeout
@@ -219,13 +232,13 @@ func main() {
 		CacheDuration: 1 * time.Second, // Disable caching for dev
 	})
 
-	// --- Set up basic API routes (uses operational config 'cfg') ---
+	// --- Set up basic API routes (uses initial operational config 'cfg') ---
 	app.Get("/api/status", func(c *fiber.Ctx) error { // Changed route from / to /api/status
 		return c.JSON(fiber.Map{
 			"status":    "online",
-			"version":   cfg.Version,
-			"config_id": cfg.ConfigID,
-			"robot_id":  cfg.RobotID,
+			"version":   cfg.Version,  // Uses initial config
+			"config_id": cfg.ConfigID, // Uses initial config
+			"robot_id":  cfg.RobotID,  // Uses initial config
 		})
 	})
 
@@ -235,17 +248,22 @@ func main() {
 		})
 	})
 
-	app.Get("/config", func(c *fiber.Ctx) error {
+	app.Get("/config", func(c *fiber.Ctx) error { // THIS OLD /config summary endpoint still uses initial config
+		inbound := cfg.GetTopicMappingsByDirection("INBOUND")
+		outbound := cfg.GetTopicMappingsByDirection("OUTBOUND")
 		return c.JSON(fiber.Map{
 			"config_id":      cfg.ConfigID,
 			"version":        cfg.Version,
-			"last_updated":   cfg.LastUpdated,
+			"last_updated":   cfg.LastUpdated, // This field might not be in the initial file?
 			"robot_id":       cfg.RobotID,
 			"topic_count":    len(cfg.TopicMappings),
-			"inbound_count":  len(inboundTopics),
-			"outbound_count": len(outboundTopics),
+			"inbound_count":  len(inbound),
+			"outbound_count": len(outbound),
 		})
 	})
+
+	// --- Register NEW Teleop Configuration API Routes ---
+	api.RegisterConfigRoutes(app, teleopConfigService, logger)
 
 	// --- WebSocket Route for Control ---
 	app.Use("/ws", func(c *fiber.Ctx) error { // Middleware to check if it's a WebSocket upgrade request
@@ -259,6 +277,7 @@ func main() {
 
 	app.Get("/ws/control", websocket.New(func(conn *websocket.Conn) {
 		// Call the handler from the api package, passing dependencies
+		// Pass TopicRegistry which currently holds the *initial* config
 		api.ControlWebSocketHandler(conn, logger, messageDirector, topicRegistry)
 	}))
 
@@ -278,43 +297,45 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
+	logger.Infof("Received termination signal. Shutting down...")
 
-	logger.Infof("Shutting down server...")
-
-	// --- Stop components ---
-	messageDirector.Stop()
-	zmqService.Stop()
-
-	// --- Shutdown HTTP server with timeout ---
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// --- Graceful Shutdown ---
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // Reduced timeout
 	defer cancel()
 
+	// Shutdown Fiber app
 	if err := app.ShutdownWithContext(ctx); err != nil {
-		logger.Fatalf("Server shutdown failed: %v", err)
+		logger.Errorf("Fiber app shutdown error: %v", err)
 	}
 
-	logger.Infof("Server gracefully stopped")
+	// Stop the message director
+	messageDirector.Stop()
+
+	// Stop the ZeroMQ service
+	zmqService.Stop()
+
+	// Shutdown ROS parser
+	rosparser.Shutdown()
+
+	logger.Infof("Controller shut down gracefully.")
 }
 
-// customErrorHandler handles errors in a structured way
-// TODO: Consider injecting the logger here if more detailed error logging is needed
-func customErrorHandler(c *fiber.Ctx, err error) error {
-	// Default to 500 Internal Server Error
+// customErrorHandler provides a basic JSON error response
+func customErrorHandler(ctx *fiber.Ctx, err error) error {
+	// Status code defaults to 500
 	code := fiber.StatusInternalServerError
+	message := "Internal Server Error"
 
-	// Retrieve the custom error message
+	// Retrieve the custom status code if it's a *fiber.Error
 	var e *fiber.Error
 	if errors.As(err, &e) {
 		code = e.Code
+		message = e.Message
 	}
 
-	// Log the error internally
-	// Consider adding more context like request ID, user agent, etc.
-	stdlog.Printf("Internal Error: %v, Path: %s", err, c.Path()) // Using stdlog temporarily
-
-	// Send generic error message to client
-	return c.Status(code).JSON(fiber.Map{
-		"error":   true,
-		"message": "Internal Server Error", // Avoid sending detailed errors to the client
+	// Send generic JSON error response
+	ctx.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+	return ctx.Status(code).JSON(fiber.Map{
+		"error": message,
 	})
 }
