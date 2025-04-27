@@ -1,0 +1,7 @@
+/* Styles specific to the Teleop tab content (e.g., joystick) */
+
+#teleop {
+    text-align: center;
+}
+
+/* Add any other styles for joystick-container, joystick-base, joystick-handle if needed */ 

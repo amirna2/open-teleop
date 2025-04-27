@@ -4,21 +4,55 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Open Teleop Control</title>
-    <link rel="stylesheet" href="style.css">
+    <!-- Main and component-specific stylesheets -->
+    <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="css/tabs.css">
+    <link rel="stylesheet" href="css/teleop.css">
+    <link rel="stylesheet" href="css/config.css">
 </head>
 <body>
-    <h1>Open Teleop Joystick Control</h1>
-    <div id="joystick-container">
-        <!-- Custom Joystick Elements -->
-        <div id="joystick-base">
-            <div id="joystick-handle"></div>
+    <h1>Open Teleop Controller UI</h1>
+
+    <!-- Tab Navigation -->
+    <div class="tab-container">
+        <button class="tab-link active" onclick="openTab(event, 'teleop')">Teleop</button>
+        <button class="tab-link" onclick="openTab(event, 'config')">Configuration</button>
+    </div>
+
+    <!-- Tab Content -->
+    <div id="teleop" class="tab-content" style="display: block;">
+        <h2>Joystick Control</h2>
+        <div id="joystick-container">
+            <!-- Custom Joystick Elements -->
+            <div id="joystick-base">
+                <div id="joystick-handle"></div>
+            </div>
+        </div>
+        <div id="status">
+            Status: Disconnected
         </div>
     </div>
-    <div id="status">
-        Status: Disconnected
+
+    <div id="config" class="tab-content">
+        <h2>Operational Configuration (YAML)</h2>
+        <textarea id="config-yaml" rows="20" cols="80" placeholder="Click 'Load Current Config' or paste YAML here..."></textarea>
+        <br>
+        <button id="load-config-btn">Load Current Config</button>
+        <button id="save-config-btn">Save Configuration</button>
+        <p id="config-status"></p> <!-- Status messages for config operations -->
     </div>
-    <!-- Remove virtualjoystick -->
-    <!-- <script src="https://jeromeetienne.github.io/virtualjoystick.js/virtualjoystick.js"></script> -->
-    <script src="script.js"></script>
+
+    <!-- Core libraries (if any) first -->
+    <!-- e.g. <script src="js/vendor/nipplejs.min.js"></script> -->
+
+    <!-- API and UI Component Scripts -->
+    <script src="js/api.js"></script>
+    <script src="js/ui/tabs.js"></script>
+    <script src="js/ui/teleop.js"></script>
+    <script src="js/ui/config.js"></script>
+
+    <!-- Main orchestrating script last -->
+    <script src="js/main.js"></script>
+
 </body>
 </html> 

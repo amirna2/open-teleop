@@ -52,5 +52,5 @@ defaults:
 # Throttling settings per priority level (0 = no throttling)
 throttle_rates:
   high_hz: 0
-  standard_hz: 10
+  standard_hz: 12
   low_hz: 1 

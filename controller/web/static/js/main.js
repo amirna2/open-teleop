@@ -1,3 +1,32 @@
+// Main orchestrating script
+
+console.log("main.js loaded");
+
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('DOM fully loaded and parsed');
+
+    // Initialize UI Components
+    if (typeof initTabs === 'function') {
+        initTabs();
+    } else {
+        console.error("initTabs function not found in js/ui/tabs.js");
+    }
+
+    if (typeof initTeleop === 'function') {
+        initTeleop();
+    } else {
+        console.error("initTeleop function not found in js/ui/teleop.js");
+    }
+
+    if (typeof initConfig === 'function') {
+        initConfig();
+    } else {
+        console.error("initConfig function not found in js/ui/config.js");
+    }
+
+    console.log("Initialization complete.");
+});
+
 // Basic structure for joystick control logic
 
 document.addEventListener('DOMContentLoaded', (event) => {
