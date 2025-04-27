@@ -28,32 +28,100 @@ class TopicManager:
             logger: Logger instance
         """
         self.node = node
-        self.topic_mappings = topic_mappings
-        self.defaults = defaults
+        self.topic_mappings = topic_mappings  # Initial mappings
+        self.defaults = defaults            # Initial defaults
         self.message_converter = message_converter
         self.zmq_client = zmq_client
         self.logger = logger or node.get_logger()
-        self.subscriptions = {}
+        self.subscriptions = {} # Key: ros_topic, Value: dict{subscriber, ott_topic, ...}
         
-        # Log all available topic mappings
-        self.logger.info(f"TopicManager received {len(topic_mappings)} topic mappings")
+        self.logger.info(f"TopicManager received {len(topic_mappings)} initial topic mappings")
         
-        # Create subscribers for outbound topics
-        outbound_count = 0
-        for mapping in topic_mappings:
-            direction = mapping.get('direction', defaults.get('direction', 'OUTBOUND'))
+        # Apply initial configuration
+        self.update_subscriptions(topic_mappings, defaults, is_initial_setup=True)
+        
+        self.logger.info(f"TopicManager initialization complete")
+
+    def update_subscriptions(self, new_topic_mappings, new_defaults, is_initial_setup=False):
+        """Dynamically update ROS subscriptions based on new configuration."""
+        if not is_initial_setup:
+            self.logger.info("Updating ROS subscriptions based on new configuration...")
+        else:
+             self.logger.info("Applying initial ROS subscription configuration...")
+
+        new_subscriptions_config = {} # Key: ros_topic, Value: mapping dict
+        default_direction = new_defaults.get('direction', 'OUTBOUND')
+
+        # 1. Filter new config for relevant outbound subscriptions
+        for mapping in new_topic_mappings:
+            direction = mapping.get('direction', default_direction)
             if direction == 'OUTBOUND':
-                # Process all outbound topics
-                self.logger.info(f"Processing outbound topic: {mapping['ros_topic']} of type {mapping['message_type']}")
-                success = self._create_subscriber(mapping)
-                if success:
-                    outbound_count += 1
+                ros_topic = mapping.get('ros_topic')
+                if ros_topic:
+                    # Apply defaults to the mapping before storing
+                    full_mapping = new_defaults.copy()
+                    full_mapping.update(mapping)
+                    new_subscriptions_config[ros_topic] = full_mapping
                 else:
-                    self.logger.error(f"Failed to create subscriber for {mapping['ros_topic']}")
-        
-        self.logger.info(f"TopicManager initialized with {outbound_count} active subscribers")
-        self.logger.info(f"Active subscriptions: {list(self.subscriptions.keys())}")
-    
+                    self.logger.warning(f"Skipping outbound mapping due to missing 'ros_topic': {mapping}")
+
+        current_ros_topics = set(self.subscriptions.keys())
+        new_ros_topics = set(new_subscriptions_config.keys())
+
+        # 2. Identify changes
+        topics_to_add = new_ros_topics - current_ros_topics
+        topics_to_remove = current_ros_topics - new_ros_topics
+        topics_to_check = current_ros_topics.intersection(new_ros_topics)
+
+        # 3. Remove old/stale subscriptions
+        for topic in topics_to_remove:
+            self.logger.info(f"Removing subscription for ROS topic: {topic}")
+            if topic in self.subscriptions:
+                try:
+                    self.node.destroy_subscription(self.subscriptions[topic]['subscriber'])
+                except Exception as e:
+                    self.logger.error(f"Error destroying subscription for {topic}: {e}")
+                del self.subscriptions[topic]
+            else:
+                self.logger.warning(f"Attempted to remove subscription for {topic}, but it was not found in the registry.")
+
+        # 4. Add new subscriptions
+        for topic in topics_to_add:
+            self.logger.info(f"Adding subscription for ROS topic: {topic}")
+            mapping = new_subscriptions_config[topic]
+            if not self._create_subscriber(mapping):
+                 self.logger.error(f"Failed to create new subscriber for {topic}")
+
+        # 5. Check existing subscriptions for changes (Treat as remove+add for now)
+        for topic in topics_to_check:
+            current_mapping = self.subscriptions[topic]
+            new_mapping = new_subscriptions_config[topic]
+            # Simple check: if ott_topic or message_type changes, recreate
+            # More granular checks could be added (e.g., for QoS, priority if it affects subscription)
+            if current_mapping['ott_topic'] != new_mapping['ott'] or \
+               current_mapping['message_type'] != new_mapping['message_type']:
+                self.logger.info(f"Recreating subscription for modified ROS topic: {topic}")
+                # Remove existing
+                if topic in self.subscriptions:
+                    try:
+                        self.node.destroy_subscription(self.subscriptions[topic]['subscriber'])
+                    except Exception as e:
+                        self.logger.error(f"Error destroying subscription for {topic} during recreate: {e}")
+                    del self.subscriptions[topic]
+                else:
+                    self.logger.warning(f"Attempted to recreate subscription for {topic}, but it was not found in the registry.")
+                # Add new
+                if not self._create_subscriber(new_mapping):
+                    self.logger.error(f"Failed to recreate subscriber for {topic}")
+            # else: # No significant change detected
+            #    self.logger.debug(f"No change detected for existing subscription: {topic}")
+
+        # 6. Update internal state
+        self.topic_mappings = new_topic_mappings
+        self.defaults = new_defaults
+        self.logger.info(f"Subscription update complete. Active subscriptions: {len(self.subscriptions)}")
+        self.logger.debug(f"Active subscription topics: {list(self.subscriptions.keys())}")
+
     def _resolve_message_type(self, message_type_str):
         """
         Dynamically resolve a ROS message type from its string representation.
@@ -99,9 +167,22 @@ class TopicManager:
         """
         try:
             ros_topic = mapping['ros_topic']
-            ott_topic = mapping['ott']
+            # Ensure ott_topic exists in the potentially updated mapping
+            ott_topic = mapping.get('ott') 
+            if not ott_topic:
+                 self.logger.error(f"Mapping for ROS topic '{ros_topic}' is missing the 'ott' field.")
+                 return False
+                 
             message_type_str = mapping['message_type']
+            # Use updated defaults access if necessary, though mapping should be complete here
             priority = mapping.get('priority', self.defaults.get('priority', 'STANDARD'))
+            
+            # Check if already subscribed
+            if ros_topic in self.subscriptions:
+                self.logger.warning(f"Attempted to create subscriber for existing topic: {ros_topic}. Skipping.")
+                # Consider if this should return True or False, or update existing.
+                # Returning True assuming the existing one is desired.
+                return True
             
             # Resolve the message type
             message_class = self._resolve_message_type(message_type_str)
@@ -142,7 +223,7 @@ class TopicManager:
             self.logger.info(f"Successfully subscribed to {ros_topic} with message type {message_type_str}")
             return True
         except Exception as e:
-            self.logger.error(f"Error creating subscriber for {mapping['ros_topic']}: {e}")
+            self.logger.error(f"Error creating subscriber for {mapping.get('ros_topic', '[unknown]')}: {e}")
             import traceback
             self.logger.error(traceback.format_exc())
             return False
@@ -158,11 +239,12 @@ class TopicManager:
         self.logger.debug(f"handle_message invoked for topic: {topic_name}")
         
         if topic_name not in self.subscriptions:
-            self.logger.warning(f"Received message on unknown topic: {topic_name}")
+            # This might happen briefly during reconfiguration, log as warning
+            self.logger.warning(f"Received message on topic '{topic_name}' but no active subscription found (possibly stale).")
             return
         
-        subscription = self.subscriptions[topic_name]
-        ott_topic = subscription['ott_topic']
+        subscription_info = self.subscriptions[topic_name]
+        ott_topic = subscription_info['ott_topic']
         
         self.logger.debug(f"Attempting to serialize ROS message for {topic_name}")
         try:
@@ -207,8 +289,9 @@ class TopicManager:
 
             # Log the reply from the controller
             if reply_str:
-                self.logger.debug(f"Received ACK/reply from controller: {reply_str[:100]}...")
-                self.logger.info(f"Successfully forwarded message from {topic_name} to {ott_topic}")
+                # Reduce log spam, maybe log only periodically or on change?
+                self.logger.debug(f"Received ACK/reply from controller for {ott_topic}: {reply_str[:50]}...")
+                # self.logger.info(f"Successfully forwarded message from {topic_name} to {ott_topic}")
             else:
                 self.logger.warning(f"Did not receive reply from controller for {ott_topic}")
             
@@ -219,9 +302,18 @@ class TopicManager:
     
     def shutdown(self):
         """Shut down all subscribers."""
-        for topic, subscription in self.subscriptions.items():
+        # Use list keys to avoid modifying dict during iteration
+        topics_to_remove = list(self.subscriptions.keys())
+        for topic in topics_to_remove:
             self.logger.info(f"Shutting down subscriber for {topic}")
-            self.node.destroy_subscription(subscription['subscriber'])
+            if topic in self.subscriptions:
+                try:
+                    self.node.destroy_subscription(self.subscriptions[topic]['subscriber'])
+                except Exception as e:
+                     self.logger.error(f"Error destroying subscription during shutdown for {topic}: {e}")
+                # Keep item in dict until loop finishes?
+            else:
+                self.logger.warning(f"Attempted to shutdown subscriber for {topic}, but it was not found.")
         
         self.subscriptions.clear()
         self.logger.info("TopicManager shutdown complete") 

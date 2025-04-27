@@ -102,50 +102,56 @@ func main() {
 	}
 	logger.Infof("Logger initialized: Level=%s, Directory='%s'", finalLogLevel, finalLogPath)
 
-	// --- Load Initial Operational Configuration (needed for ZMQ service setup) ---
+	// --- Load Initial Operational Configuration (needed for early checks/logging) ---
 	operationalConfigPath := filepath.Join(*configDir, bootstrapCfg.Data.TeleopConfigFilename)
-	logger.Infof("Attempting to load initial operational configuration from: %s", operationalConfigPath)
+	logger.Infof("Checking initial operational configuration from: %s", operationalConfigPath)
 	initialCfg, err := config.LoadConfig(operationalConfigPath) // Load initial config directly
 	if err != nil {
-		// If the initial config load fails, we likely cannot proceed.
+		// If LoadConfig fails, err will be non-nil. LoadConfig should handle returning an error if the file is empty/invalid.
 		logger.Fatalf("Failed to load initial operational configuration from %s: %v. Cannot proceed.", operationalConfigPath, err)
 	}
-	if initialCfg == nil {
-		logger.Fatalf("Initial operational configuration loaded as nil from %s. Cannot proceed.", operationalConfigPath)
-	}
-	logger.Infof("Loaded initial operational configuration (ID: %s) for component setup.", initialCfg.ConfigID)
+	// If we reach here, err is nil, assume initialCfg is valid and non-nil.
+	logger.Infof("Initial operational configuration loaded (ID: %s) for setup.", initialCfg.ConfigID)
 
-	// --- Initialize ZeroMQ service (using initial config) ---
+	// --- Initialize ZeroMQ service ---
+	// Note: Using initialCfg here only if NewZeroMQService requires operational config parts.
+	// Ideally, it should only depend on bootstrap config for binding.
 	zmqService, err := zeromq.NewZeroMQService(
 		bootstrapCfg.ZeroMQ.RequestBindAddress,
 		bootstrapCfg.ZeroMQ.PublishBindAddress,
-		initialCfg.ZeroMQ, // Use initial config for ZMQ settings
+		initialCfg.ZeroMQ, // Pass initial operational ZMQ config if needed by constructor
 		logger,
 	)
 	if err != nil {
 		logger.Fatalf("Failed to initialize ZeroMQ service: %v", err)
 	}
 
-	// --- Register configuration handlers and publisher (using initial config) ---
-	// The service needs this publisher instance to send notifications later.
-	configPublisher := zeromq.RegisterConfigHandlers(zmqService, initialCfg, logger) // Use initial config
-
 	// --- Initialize Teleop Configuration Service ---
-	// Pass the configPublisher instance to the service constructor.
-	// The service will load the config again internally to manage its state.
+	// Publisher will be injected later.
 	logger.Infof("Initializing Teleop Configuration Service for: %s", operationalConfigPath)
-	teleopConfigService, err := services.NewTeleopConfigService(operationalConfigPath, logger, configPublisher)
+	teleopConfigService, err := services.NewTeleopConfigService(operationalConfigPath, logger) // Create service without publisher first
 	if err != nil {
-		// Log warning, but proceed as the service might recover or config could be set via API
 		logger.Warnf("Error initializing TeleopConfigService: %v. Operational config might be missing initially.", err)
 	}
 
+	// --- Register ZMQ Config Request Handler ---
+	// The handler will use the teleopConfigService to get the *current* config when requested.
+	zeromq.RegisterZmqConfigRequestHandler(zmqService, teleopConfigService, logger)
+
+	// --- Create ZMQ Config Publisher ---
+	// The publisher also uses the service to get the current config when sending notifications.
+	configPublisher := zeromq.NewConfigPublisher(zmqService, teleopConfigService, logger)
+
+	// --- Inject Publisher into Service ---
+	// Now that both exist, link them.
+	teleopConfigService.SetPublisher(configPublisher)
+
 	// --- Get Managed Operational Configuration from Service ---
 	// Use the config managed by the service for components that might need updates later (even if not dynamic yet)
-	cfg := teleopConfigService.GetCurrentConfig() // Get the config loaded by the service
+	cfg := teleopConfigService.GetCurrentConfig() // Get the config loaded/managed by the service
 	if cfg == nil {
-		// This case should ideally not happen if initialCfg loaded successfully, but handle defensively
-		logger.Warnf("Config from TeleopConfigService is nil after initialization, using initial load data for setup.")
+		// If service failed initial load, fallback to the initial data we loaded earlier
+		logger.Warnf("Config from TeleopConfigService is nil after initialization, using initial load data for component setup.")
 		cfg = initialCfg // Fallback to initially loaded data for the rest of the setup
 	}
 
@@ -219,7 +225,7 @@ func main() {
 	}
 	logger.Infof("ZeroMQ service started successfully")
 
-	// Publish initial config notification using the existing publisher
+	// Publish initial config notification using the publisher
 	if err := configPublisher.PublishConfigUpdatedNotification(); err != nil {
 		logger.Warnf("Warning: Failed to publish initial config notification: %v", err)
 	}

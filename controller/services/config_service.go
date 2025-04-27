@@ -24,6 +24,7 @@ type TeleopConfigService interface {
 	GetCurrentConfigYAML() ([]byte, error)
 	UpdateConfig(newConfigYAML []byte) error
 	PersistConfig(yamlData []byte) error
+	SetPublisher(p ConfigPublisher)
 }
 
 // teleopConfigService implements the TeleopConfigService interface.
@@ -36,8 +37,8 @@ type teleopConfigService struct {
 }
 
 // NewTeleopConfigService creates a new TeleopConfigService.
-// It requires the path to the operational configuration file, a logger, and a config publisher.
-func NewTeleopConfigService(operationalConfigPath string, logger customlog.Logger, configPublisher ConfigPublisher) (TeleopConfigService, error) {
+// Publisher can be set later via SetPublisher.
+func NewTeleopConfigService(operationalConfigPath string, logger customlog.Logger) (TeleopConfigService, error) {
 	if operationalConfigPath == "" {
 		return nil, fmt.Errorf("operational configuration path cannot be empty")
 	}
@@ -46,15 +47,11 @@ func NewTeleopConfigService(operationalConfigPath string, logger customlog.Logge
 		logger, _ = customlog.NewLogrusLogger("info", "")
 		logger.Warnf("No logger provided to TeleopConfigService, using default.")
 	}
-	// configPublisher can be nil if notifications are not needed/configured
-	if configPublisher == nil {
-		logger.Warnf("No ConfigPublisher provided to TeleopConfigService. Update notifications will be disabled.")
-	}
 
 	service := &teleopConfigService{
 		operationalConfigPath: operationalConfigPath,
 		logger:                logger,
-		configPublisher:       configPublisher,
+		configPublisher:       nil, // Initialize publisher as nil
 		mu:                    sync.RWMutex{},
 	}
 
@@ -219,4 +216,12 @@ func (s *teleopConfigService) persistConfigUnlocked(yamlData []byte) error {
 	}
 	s.logger.Infof("Successfully persisted configuration to %s", s.operationalConfigPath)
 	return nil
+}
+
+// SetPublisher allows injecting the ConfigPublisher after initialization.
+func (s *teleopConfigService) SetPublisher(p ConfigPublisher) {
+	s.mu.Lock() // Lock needed as we modify the service state
+	defer s.mu.Unlock()
+	s.configPublisher = p
+	s.logger.Infof("ConfigPublisher injected into TeleopConfigService.")
 }

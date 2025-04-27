@@ -6,21 +6,25 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/open-teleop/controller/pkg/config"
+	// Still needed for ErrorResponse if used
 	customlog "github.com/open-teleop/controller/pkg/log"
+	"github.com/open-teleop/controller/services"
 )
 
 // ConfigHandler handles CONFIG_REQUEST messages
 type ConfigHandler struct {
-	config *config.Config
-	logger customlog.Logger
+	configSvc services.TeleopConfigService // Store the service itself
+	logger    customlog.Logger
 }
 
 // NewConfigHandler creates a new handler for configuration requests
-func NewConfigHandler(cfg *config.Config, logger customlog.Logger) *ConfigHandler {
+func NewConfigHandler(configSvc services.TeleopConfigService, logger customlog.Logger) *ConfigHandler {
+	if configSvc == nil {
+		panic("TeleopConfigService cannot be nil in NewConfigHandler")
+	}
 	return &ConfigHandler{
-		config: cfg,
-		logger: logger,
+		configSvc: configSvc,
+		logger:    logger,
 	}
 }
 
@@ -39,11 +43,28 @@ func (h *ConfigHandler) HandleMessage(data []byte) ([]byte, error) {
 
 	h.logger.Infof("Processing configuration request")
 
+	// Get the CURRENT configuration from the service
+	currentCfg := h.configSvc.GetCurrentConfig()
+	if currentCfg == nil {
+		h.logger.Errorf("ConfigHandler: Cannot process CONFIG_REQUEST because current config from service is nil.")
+		// Return an error response to the client
+		errorResponse := ZeroMQMessage{
+			Type:      MsgTypeError,
+			Timestamp: float64(time.Now().Unix()),
+			Data: ErrorResponse{
+				Message: "Controller configuration is currently unavailable.",
+				Code:    503, // Service Unavailable
+			},
+		}
+		errorData, _ := json.Marshal(errorResponse)           // Ignore marshal error here for simplicity
+		return errorData, fmt.Errorf("current config is nil") // Also return error internally
+	}
+
 	// Create response with the current configuration
 	response := ZeroMQMessage{
 		Type:      MsgTypeConfigResponse,
 		Timestamp: float64(time.Now().Unix()),
-		Data:      h.config,
+		Data:      currentCfg, // Use the config fetched from the service
 	}
 
 	// Serialize the response
@@ -53,7 +74,7 @@ func (h *ConfigHandler) HandleMessage(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to serialize response: %w", err)
 	}
 
-	h.logger.Debugf("Sending configuration response (%d bytes)", len(responseData))
+	h.logger.Debugf("Sending configuration response (ID: %s, %d bytes)", currentCfg.ConfigID, len(responseData))
 	return responseData, nil
 }
 

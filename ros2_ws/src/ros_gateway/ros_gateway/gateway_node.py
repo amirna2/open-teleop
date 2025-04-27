@@ -153,20 +153,22 @@ class RosGateway(Node):
             for i, mapping in enumerate(inbound_topics):
                 self.logger.info(f"Inbound topic {i+1}: {mapping['ott']} -> {mapping['ros_topic']}")
 
-        # Initialize the topic manager (for ROS2 topics only) - pass full outbound topic mappings
+        # Initialize the topic manager (pass initial config)
+        outbound_mappings = self.filter_topic_mappings_by_direction(self.config.get('topic_mappings', []), self.config.get('defaults', {}), 'OUTBOUND')
         self.topic_manager = TopicManager(
-            node=self, 
-            topic_mappings=outbound_topics if self.config.get("config_id") != "default" else [], # Use empty list if fallback
+            node=self,
+            topic_mappings=outbound_mappings, # Initial filtered mappings
             defaults=self.config.get('defaults', {}),
             message_converter=self.converter,
             zmq_client=self.zmq_client,
             logger=self.logger
         )
         
-        # Initialize the topic publisher for incoming commands
+        # Initialize the topic publisher (pass initial config)
+        inbound_mappings = self.filter_topic_mappings_by_direction(self.config.get('topic_mappings', []), self.config.get('defaults', {}), 'INBOUND')
         self.topic_publisher = TopicPublisher(
             node=self,
-            topic_mappings=inbound_topics if self.config.get("config_id") != "default" else [], # Use empty list if fallback
+            topic_mappings=inbound_mappings, # Initial filtered mappings
             defaults=self.config.get('defaults', {}),
             message_converter=self.converter,
             zmq_client=self.zmq_client,
@@ -278,42 +280,93 @@ class RosGateway(Node):
     def handle_config_update(self, message):
         """
         Handle configuration updates from the controller.
+        This is the callback registered with zmq_client.subscribe_to_config_updates.
         
         Args:
-            message: The configuration update message
+            message: The configuration update message (JSON string) from ZMQ SUB socket
         """
         try:
+            # The message might be the full config or just a notification
             data = json.loads(message)
+            msg_type = data.get('type')
+            topic = data.get('topic') # ZMQ SUB socket includes the topic
             
-            if data.get('type') == 'CONFIG_UPDATE':
-                self.logger.info("Received configuration update from controller")
-                new_config = data.get('data', {})
-                
-                # Store the new configuration
-                self.config = new_config
-                
-                # Display config info
-                self.logger.info(f"Updated configuration version: {self.config.get('version')}")
-                self.logger.info(f"Config ID: {self.config.get('config_id')}")
-                
-                # TODO: Implement dynamic reconfiguration based on the new config
-                self.logger.warning("Dynamic reconfiguration not implemented yet")
-                
-            elif data.get('type') == 'CONFIG_UPDATED':
-                self.logger.info("Received notification that configuration has changed")
+            # We expect notifications on 'configuration.notification'
+            # or potentially full updates on 'configuration.update'
+            if msg_type == 'CONFIG_UPDATED' or (topic and topic.startswith('configuration.notification')):
+                self.logger.info("Received notification that configuration has changed on controller.")
+                self.logger.info("Requesting full updated configuration...")
                 
                 # Proactively request the new configuration
-                self.config = self.zmq_client.request_config()
+                new_config = self.zmq_client.request_config()
                 
-                if self.config is not None:
-                    self.logger.info("Successfully received updated configuration")
-                    # TODO: Implement dynamic reconfiguration
+                if new_config is not None:
+                    self.logger.info("Successfully received updated configuration from controller.")
+                    
+                    # Apply the new configuration dynamically
+                    self.apply_new_configuration(new_config)
+                    
+                else:
+                    self.logger.error("Failed to retrieve updated configuration after notification.")
+            
+            elif msg_type == 'CONFIG_RESPONSE' or (topic and topic.startswith('configuration.update')):
+                 # Handle case where controller pushes the full config directly (optional)
+                 self.logger.info("Received full configuration update directly via ZMQ publish.")
+                 new_config = data.get('data')
+                 if new_config:
+                     self.apply_new_configuration(new_config)
+                 else:
+                     self.logger.warning("Received CONFIG_RESPONSE/update message but no 'data' field found.")
+                     
+            else:
+                self.logger.warning(f"Received unexpected message type '{msg_type}' on config subscription topic '{topic}'. Ignoring.")
                 
+        except json.JSONDecodeError as e:
+             self.logger.error(f"Error decoding JSON from ZMQ config update message: {e}")
+             self.logger.error(f"Raw message: {message[:200]}...") # Log raw message for debugging
         except Exception as e:
             self.logger.error(f"Error processing configuration update: {e}")
-    
+            import traceback
+            self.logger.error(traceback.format_exc())
+
+    def apply_new_configuration(self, new_config):
+        """Applies the received configuration to relevant components."""
+        self.logger.info(f"Applying new configuration (ID: {new_config.get('config_id', 'N/A')}, Version: {new_config.get('version', 'N/A')})" )
+        
+        # Extract mappings and defaults
+        new_topic_mappings = new_config.get('topic_mappings', [])
+        new_defaults = new_config.get('defaults', {})
+        
+        # Update Topic Manager (Subscriptions)
+        if hasattr(self, 'topic_manager') and self.topic_manager:
+            try:
+                 self.topic_manager.update_subscriptions(new_topic_mappings, new_defaults)
+                 self.logger.info("TopicManager subscriptions updated.")
+            except Exception as e:
+                 self.logger.error(f"Error updating TopicManager subscriptions: {e}")
+                 import traceback
+                 self.logger.error(traceback.format_exc())
+        else:
+            self.logger.warning("TopicManager not initialized, cannot update subscriptions.")
+
+        # Update Topic Publisher
+        if hasattr(self, 'topic_publisher') and self.topic_publisher:
+            try:
+                 self.topic_publisher.update_publishers(new_topic_mappings, new_defaults)
+                 self.logger.info("TopicPublisher publishers updated.")
+            except Exception as e:
+                 self.logger.error(f"Error updating TopicPublisher publishers: {e}")
+                 import traceback
+                 self.logger.error(traceback.format_exc())
+        else:
+            self.logger.warning("TopicPublisher not initialized, cannot update publishers.")
+            
+        # Update the node's stored configuration
+        self.config = new_config
+        self.logger.info("Gateway configuration state updated.")
+
     def filter_topic_mappings_by_source_type(self, topic_mappings, defaults, source_type):
-        """Filter topic mappings by source type (replacement for config_loader method)"""
+        """Filter topic mappings by source type."""
         default_source_type = defaults.get('source_type')
         result = []
         
@@ -328,12 +381,12 @@ class RosGateway(Node):
         return result
     
     def filter_topic_mappings_by_direction(self, topic_mappings, defaults, direction):
-        """Filter topic mappings by direction (replacement for config_loader method)"""
-        default_direction = defaults.get('direction', 'OUTBOUND')
+        """Filter topic mappings by direction."""
+        default_dir = defaults.get('direction', 'OUTBOUND')
         result = []
         
         for mapping in topic_mappings:
-            map_direction = mapping.get('direction', default_direction)
+            map_direction = mapping.get('direction', default_dir)
             if map_direction == direction:
                 # Apply defaults for missing values
                 config = defaults.copy()
