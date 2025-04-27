@@ -10,6 +10,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ConfigPublisher defines the interface for publishing configuration updates.
+// This avoids a direct dependency on the concrete ZeroMQService or ConfigPublisher implementation.
+type ConfigPublisher interface {
+	PublishConfigUpdatedNotification() error
+	// Add other methods if needed, e.g., PublishConfigUpdate()
+}
+
 // TeleopConfigService defines the interface for managing the operational teleop configuration.
 type TeleopConfigService interface {
 	LoadConfig() error
@@ -23,14 +30,14 @@ type TeleopConfigService interface {
 type teleopConfigService struct {
 	operationalConfigPath string
 	logger                customlog.Logger
+	configPublisher       ConfigPublisher
 	currentConfig         *config.Config
 	mu                    sync.RWMutex
 }
 
 // NewTeleopConfigService creates a new TeleopConfigService.
-// It requires the path to the operational configuration file (e.g., "config/open_teleop_config.yaml")
-// and a logger instance.
-func NewTeleopConfigService(operationalConfigPath string, logger customlog.Logger) (TeleopConfigService, error) {
+// It requires the path to the operational configuration file, a logger, and a config publisher.
+func NewTeleopConfigService(operationalConfigPath string, logger customlog.Logger, configPublisher ConfigPublisher) (TeleopConfigService, error) {
 	if operationalConfigPath == "" {
 		return nil, fmt.Errorf("operational configuration path cannot be empty")
 	}
@@ -39,10 +46,15 @@ func NewTeleopConfigService(operationalConfigPath string, logger customlog.Logge
 		logger, _ = customlog.NewLogrusLogger("info", "")
 		logger.Warnf("No logger provided to TeleopConfigService, using default.")
 	}
+	// configPublisher can be nil if notifications are not needed/configured
+	if configPublisher == nil {
+		logger.Warnf("No ConfigPublisher provided to TeleopConfigService. Update notifications will be disabled.")
+	}
 
 	service := &teleopConfigService{
 		operationalConfigPath: operationalConfigPath,
 		logger:                logger,
+		configPublisher:       configPublisher,
 		mu:                    sync.RWMutex{},
 	}
 
@@ -113,7 +125,7 @@ func (s *teleopConfigService) GetCurrentConfigYAML() ([]byte, error) {
 	return data, nil
 }
 
-// UpdateConfig validates, persists, and applies the new operational configuration.
+// UpdateConfig validates, persists, applies the new operational configuration, and publishes a notification.
 // It takes the new configuration as a YAML byte slice.
 func (s *teleopConfigService) UpdateConfig(newConfigYAML []byte) error {
 	s.mu.Lock()
@@ -158,18 +170,31 @@ func (s *teleopConfigService) UpdateConfig(newConfigYAML []byte) error {
 	}
 
 	// 4. Apply the new configuration (update in-memory representation)
+	oldCfgId := "N/A"
+	if s.currentConfig != nil {
+		oldCfgId = s.currentConfig.ConfigID
+	}
 	s.currentConfig = &newCfg
-	s.logger.Infof("Successfully updated and persisted operational configuration. New ConfigID: %s, Version: %s", s.currentConfig.ConfigID, s.currentConfig.Version)
+	s.logger.Infof("Successfully updated and persisted operational configuration. ID %s -> %s, Version: %s", oldCfgId, s.currentConfig.ConfigID, s.currentConfig.Version)
 
-	// 5. Trigger notifications/reloads (Placeholder for future implementation)
-	// This is where we would notify other services (like TopicRegistry) or potentially
-	// send a ZeroMQ message to the gateway if we were implementing Option B.
-	s.logger.Infof("Configuration updated. Reloading dependent components is required (manual restart for gateway).")
-	// Example (if TopicRegistry were passed in or accessible):
-	// if s.topicRegistry != nil {
-	//    s.topicRegistry.LoadFromConfig(s.currentConfig)
-	//    s.logger.Infof("TopicRegistry reloaded with new configuration.")
-	// }
+	// 5. Trigger notification via ConfigPublisher (if available)
+	if s.configPublisher != nil {
+		// Publish notification in a separate goroutine to avoid blocking the update process
+		go func(publisher ConfigPublisher) {
+			s.logger.Debugf("Attempting to publish config update notification...")
+			if err := publisher.PublishConfigUpdatedNotification(); err != nil {
+				s.logger.Warnf("Failed to publish config update notification: %v", err)
+			} else {
+				s.logger.Infof("Published config update notification successfully.")
+			}
+		}(s.configPublisher) // Pass publisher to goroutine
+	} else {
+		s.logger.Infof("ConfigPublisher not configured, skipping update notification.")
+	}
+
+	// NOTE: Reloading dependent components (like TopicRegistry) still needs to be handled elsewhere
+	// This service only publishes the notification.
+	s.logger.Infof("Configuration updated. Notification sent (if publisher configured). Dependent components may require manual reload or restart.")
 
 	return nil
 }

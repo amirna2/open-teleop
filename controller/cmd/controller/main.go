@@ -102,55 +102,73 @@ func main() {
 	}
 	logger.Infof("Logger initialized: Level=%s, Directory='%s'", finalLogLevel, finalLogPath)
 
-	// --- Initialize Teleop Configuration Service ---
+	// --- Load Initial Operational Configuration (needed for ZMQ service setup) ---
 	operationalConfigPath := filepath.Join(*configDir, bootstrapCfg.Data.TeleopConfigFilename)
-	logger.Infof("Initializing Teleop Configuration Service for: %s", operationalConfigPath)
-	teleopConfigService, err := services.NewTeleopConfigService(operationalConfigPath, logger)
+	logger.Infof("Attempting to load initial operational configuration from: %s", operationalConfigPath)
+	initialCfg, err := config.LoadConfig(operationalConfigPath) // Load initial config directly
 	if err != nil {
-		// Although the service allows creation on initial load error, we might need the config for essential setup.
-		logger.Warnf("Error initializing TeleopConfigService: %v. Proceeding, but operational config might be missing.", err)
+		// If the initial config load fails, we likely cannot proceed.
+		logger.Fatalf("Failed to load initial operational configuration from %s: %v. Cannot proceed.", operationalConfigPath, err)
 	}
-
-	// --- Get Initial Operational Configuration ---
-	cfg := teleopConfigService.GetCurrentConfig() // Get the config loaded by the service
-	if cfg == nil {
-		// Decide how critical this is. If essential components need it, we should probably exit.
-		// For now, log a fatal error if the config is nil after service initialization attempt.
-		logger.Fatalf("Failed to load initial operational configuration from %s. Cannot proceed without configuration.", operationalConfigPath)
+	if initialCfg == nil {
+		logger.Fatalf("Initial operational configuration loaded as nil from %s. Cannot proceed.", operationalConfigPath)
 	}
+	logger.Infof("Loaded initial operational configuration (ID: %s) for component setup.", initialCfg.ConfigID)
 
-	// Log the configuration details (using operational config 'cfg')
-	logger.Infof("Loaded initial operational configuration")
-	logger.Infof("Operational Config ID: %s, Version: %s", cfg.ConfigID, cfg.Version)
-	logger.Infof("Robot ID: %s", cfg.RobotID)
-
-	// Log ZeroMQ settings (using bootstrap config for binds, operational for connect/subscribe)
-	logger.Infof("ZeroMQ Request Bind Address: %s (from bootstrap config)", bootstrapCfg.ZeroMQ.RequestBindAddress)
-	logger.Infof("ZeroMQ Publish Bind Address: %s (from bootstrap config)", bootstrapCfg.ZeroMQ.PublishBindAddress)
-	logger.Infof("ZeroMQ Gateway Connect Address: %s (from operational config)", cfg.ZeroMQ.GatewayConnectAddress)
-	logger.Infof("ZeroMQ Gateway Subscribe Address: %s (from operational config)", cfg.ZeroMQ.GatewaySubscribeAddress)
-
-	// Log topic mappings summary (from operational config 'cfg')
-	inboundTopics := cfg.GetTopicMappingsByDirection("INBOUND")
-	outboundTopics := cfg.GetTopicMappingsByDirection("OUTBOUND")
-	logger.Infof("Loaded %d topic mappings (%d inbound, %d outbound)",
-		len(cfg.TopicMappings), len(inboundTopics), len(outboundTopics))
-
-	// --- Initialize ZeroMQ service ---
+	// --- Initialize ZeroMQ service (using initial config) ---
 	zmqService, err := zeromq.NewZeroMQService(
-		bootstrapCfg.ZeroMQ.RequestBindAddress, // Use bootstrap config for bind address
-		bootstrapCfg.ZeroMQ.PublishBindAddress, // Use bootstrap config for bind address
-		cfg.ZeroMQ,                             // Pass operational ZMQ config for other settings if needed
+		bootstrapCfg.ZeroMQ.RequestBindAddress,
+		bootstrapCfg.ZeroMQ.PublishBindAddress,
+		initialCfg.ZeroMQ, // Use initial config for ZMQ settings
 		logger,
 	)
 	if err != nil {
 		logger.Fatalf("Failed to initialize ZeroMQ service: %v", err)
 	}
 
-	// --- Initialize Topic Registry (uses initial operational config 'cfg') ---
+	// --- Register configuration handlers and publisher (using initial config) ---
+	// The service needs this publisher instance to send notifications later.
+	configPublisher := zeromq.RegisterConfigHandlers(zmqService, initialCfg, logger) // Use initial config
+
+	// --- Initialize Teleop Configuration Service ---
+	// Pass the configPublisher instance to the service constructor.
+	// The service will load the config again internally to manage its state.
+	logger.Infof("Initializing Teleop Configuration Service for: %s", operationalConfigPath)
+	teleopConfigService, err := services.NewTeleopConfigService(operationalConfigPath, logger, configPublisher)
+	if err != nil {
+		// Log warning, but proceed as the service might recover or config could be set via API
+		logger.Warnf("Error initializing TeleopConfigService: %v. Operational config might be missing initially.", err)
+	}
+
+	// --- Get Managed Operational Configuration from Service ---
+	// Use the config managed by the service for components that might need updates later (even if not dynamic yet)
+	cfg := teleopConfigService.GetCurrentConfig() // Get the config loaded by the service
+	if cfg == nil {
+		// This case should ideally not happen if initialCfg loaded successfully, but handle defensively
+		logger.Warnf("Config from TeleopConfigService is nil after initialization, using initial load data for setup.")
+		cfg = initialCfg // Fallback to initially loaded data for the rest of the setup
+	}
+
+	// Log the configuration details (using managed config 'cfg')
+	logger.Infof("Using configuration for setup: ID: %s, Version: %s", cfg.ConfigID, cfg.Version)
+	logger.Infof("Robot ID: %s", cfg.RobotID)
+
+	// Log ZeroMQ settings (using bootstrap for bind, managed operational for connect/subscribe)
+	logger.Infof("ZeroMQ Request Bind Address: %s (from bootstrap config)", bootstrapCfg.ZeroMQ.RequestBindAddress)
+	logger.Infof("ZeroMQ Publish Bind Address: %s (from bootstrap config)", bootstrapCfg.ZeroMQ.PublishBindAddress)
+	logger.Infof("ZeroMQ Gateway Connect Address: %s (from operational config)", cfg.ZeroMQ.GatewayConnectAddress)
+	logger.Infof("ZeroMQ Gateway Subscribe Address: %s (from operational config)", cfg.ZeroMQ.GatewaySubscribeAddress)
+
+	// Log topic mappings summary (using managed config 'cfg')
+	inboundTopics := cfg.GetTopicMappingsByDirection("INBOUND")
+	outboundTopics := cfg.GetTopicMappingsByDirection("OUTBOUND")
+	logger.Infof("Loaded %d topic mappings (%d inbound, %d outbound)",
+		len(cfg.TopicMappings), len(inboundTopics), len(outboundTopics))
+
+	// --- Initialize Topic Registry (using managed config 'cfg') ---
 	logger.Infof("Initializing Topic Registry")
 	topicRegistry := processing.NewTopicRegistry(logger)
-	topicRegistry.LoadFromConfig(cfg) // Load with initial config
+	topicRegistry.LoadFromConfig(cfg) // Load with managed config
 	// NOTE: TopicRegistry will NOT automatically update if config changes via API unless explicitly reloaded.
 
 	// --- Initialize ROS Parser ---
@@ -162,7 +180,7 @@ func main() {
 	}
 	defer rosparser.Shutdown()
 
-	// --- Create ROS Message Processor (uses operational config 'cfg' via TopicRegistry) ---
+	// --- Create ROS Message Processor (using TopicRegistry which has managed config) ---
 	logger.Infof("Creating ROS Message Processor")
 	rosProcessor := processing.NewRosMessageProcessor(logger, topicRegistry)
 
@@ -170,12 +188,12 @@ func main() {
 	logger.Infof("Creating Result Handler")
 	resultHandler := processing.NewLoggingResultHandler(logger, zmqService)
 
-	// --- Initialize and configure Message Director (uses initial operational config 'cfg') ---
+	// --- Initialize and configure Message Director (using managed config 'cfg') ---
 	logger.Infof("Initializing Message Director")
 	directorOptions := &processing.DirectorOptions{
 		DefaultQueueSize: 1000, // TODO: Consider making this configurable (perhaps via bootstrap?)
 	}
-	messageDirector := processing.NewMessageDirector(cfg, logger, topicRegistry, directorOptions) // Uses initial config
+	messageDirector := processing.NewMessageDirector(cfg, logger, topicRegistry, directorOptions) // Uses managed config
 	// NOTE: MessageDirector will NOT automatically update if config changes via API unless explicitly reloaded.
 
 	// Initialize with worker counts from bootstrap config
@@ -195,19 +213,15 @@ func main() {
 	// Start the Message Director
 	messageDirector.Start()
 
-	// --- Register configuration handlers and publisher (uses initial operational config 'cfg') ---
-	configPublisher := zeromq.RegisterConfigHandlers(zmqService, cfg, logger) // Uses initial config
-	// NOTE: ZMQ Handlers/Publisher will NOT automatically update if config changes via API unless explicitly reloaded/re-registered.
-
 	// --- Start the ZeroMQ service ---
 	if err := zmqService.Start(); err != nil {
 		logger.Fatalf("Failed to start ZeroMQ service: %v", err)
 	}
 	logger.Infof("ZeroMQ service started successfully")
 
-	// Publish initial config notification
+	// Publish initial config notification using the existing publisher
 	if err := configPublisher.PublishConfigUpdatedNotification(); err != nil {
-		logger.Warnf("Warning: Failed to publish config notification: %v", err)
+		logger.Warnf("Warning: Failed to publish initial config notification: %v", err)
 	}
 
 	// --- Create Fiber app (HTTP Server) ---
