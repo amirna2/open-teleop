@@ -129,29 +129,28 @@ class RosGateway(Node):
             self.logger.info(f"Config ID: {self.config.get('config_id')}")
             self.logger.info(f"Robot ID: {self.config.get('robot_id')}")
 
-            # Log topic mappings
+            # Log topic mappings at DEBUG level
             topic_mappings = self.config.get('topic_mappings', [])
             for i, mapping in enumerate(topic_mappings):
-                self.logger.info(f"Topic mapping {i+1}: {json.dumps(mapping)}")
-                self.logger.debug(f"  Keys: {list(mapping.keys())}")
+                self.logger.debug(f"Topic mapping {i+1}: {json.dumps(mapping)}")
             
             # Get defaults
             defaults = self.config.get('defaults', {})
-            self.logger.info(f"Default values: {json.dumps(defaults)}")
+            self.logger.debug(f"Default values: {json.dumps(defaults)}")
             
-            # Extract topic lists for logging
+            # Extract topic lists for logging (keep summary at INFO)
             ros2_topics = [m.get('ros_topic') for m in topic_mappings]
             ott_topics = [m.get('ott') for m in topic_mappings]
             self.logger.info(f"Found {len(ros2_topics)} ROS2 topics and {len(ott_topics)} Open-Teleop topics")
             
-            # Filter topic mappings by direction
+            # Filter topic mappings by direction (keep summary at INFO)
             inbound_topics = self.filter_topic_mappings_by_direction(topic_mappings, defaults, 'INBOUND')
             outbound_topics = self.filter_topic_mappings_by_direction(topic_mappings, defaults, 'OUTBOUND')
             self.logger.info(f"Found {len(inbound_topics)} inbound topics and {len(outbound_topics)} outbound topics")
             
-            # Log detailed information about inbound topics
+            # Log detailed information about inbound topics at DEBUG
             for i, mapping in enumerate(inbound_topics):
-                self.logger.info(f"Inbound topic {i+1}: {mapping['ott']} -> {mapping['ros_topic']}")
+                self.logger.debug(f"Inbound topic {i+1}: {mapping['ott']} -> {mapping['ros_topic']}")
 
         # Initialize the topic manager (pass initial config)
         outbound_mappings = self.filter_topic_mappings_by_direction(self.config.get('topic_mappings', []), self.config.get('defaults', {}), 'OUTBOUND')

@@ -82,7 +82,7 @@ class TopicPublisher:
             qos_profile = 10
             publisher = self.node.create_publisher(message_class, ros_topic, qos_profile)
             self.publishers[ott_topic] = publisher
-            self.logger.info(f"Created publisher for OTT='{ott_topic}' -> ROS='{ros_topic}' (Type: {msg_type_str})")
+            self.logger.debug(f"Created publisher for OTT='{ott_topic}' -> ROS='{ros_topic}' (Type: {msg_type_str})")
             return True
         except Exception as e:
             self.logger.error(f"Error creating publisher for ROS topic '{ros_topic}': {e}")
@@ -120,7 +120,7 @@ class TopicPublisher:
 
         # 3. Remove old/stale publishers
         for ott_topic in topics_to_remove:
-            self.logger.info(f"Removing publisher for OTT topic: {ott_topic}")
+            self.logger.debug(f"Removing publisher for OTT topic: {ott_topic}")
             if ott_topic in self.publishers:
                 try:
                     self.node.destroy_publisher(self.publishers[ott_topic])
@@ -132,7 +132,7 @@ class TopicPublisher:
 
         # 4. Add new publishers
         for ott_topic in topics_to_add:
-            self.logger.info(f"Adding publisher for OTT topic: {ott_topic}")
+            self.logger.debug(f"Adding publisher for OTT topic: {ott_topic}")
             if not self._create_publisher(new_publisher_config[ott_topic]):
                  self.logger.error(f"Failed to create new publisher for {ott_topic}")
 
@@ -147,7 +147,7 @@ class TopicPublisher:
             current_ros_topic = current_publisher.topic_name # Get topic name from publisher
             if current_ros_topic != new_mapping.get('ros_topic') or \
                current_publisher.msg_type.__name__ != self._resolve_message_type(new_mapping.get('message_type')).__name__:
-                 self.logger.info(f"Recreating publisher for modified OTT topic: {ott_topic}")
+                 self.logger.debug(f"Recreating publisher for modified OTT topic: {ott_topic}")
                  # Remove
                  if ott_topic in self.publishers:
                      try:
@@ -180,7 +180,7 @@ class TopicPublisher:
         # Currently subscribes to a broad prefix. Refine if needed.
         zmq_topic_prefix = "teleop.control." # TODO: Make configurable or derive from mappings?
         try:
-            self.logger.info(f"Starting/Ensuring ZMQ subscription to '{zmq_topic_prefix}'")
+            self.logger.debug(f"Starting/Ensuring ZMQ subscription to '{zmq_topic_prefix}'")
             # Ensure ZeroMQ client is initialized before starting to receive
             self.zmq_client.start_receiving(zmq_topic_prefix, self.handle_controller_message)
         except Exception as e:

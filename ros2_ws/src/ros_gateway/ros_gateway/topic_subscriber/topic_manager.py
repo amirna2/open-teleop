@@ -35,7 +35,7 @@ class TopicManager:
         self.logger = logger or node.get_logger()
         self.subscriptions = {} # Key: ros_topic, Value: dict{subscriber, ott_topic, ...}
         
-        self.logger.info(f"TopicManager received {len(topic_mappings)} initial topic mappings")
+        self.logger.debug(f"TopicManager received {len(topic_mappings)} initial topic mappings")
         
         # Apply initial configuration
         self.update_subscriptions(topic_mappings, defaults, is_initial_setup=True)
@@ -75,7 +75,7 @@ class TopicManager:
 
         # 3. Remove old/stale subscriptions
         for topic in topics_to_remove:
-            self.logger.info(f"Removing subscription for ROS topic: {topic}")
+            self.logger.debug(f"Removing subscription for ROS topic: {topic}")
             if topic in self.subscriptions:
                 try:
                     self.node.destroy_subscription(self.subscriptions[topic]['subscriber'])
@@ -87,7 +87,7 @@ class TopicManager:
 
         # 4. Add new subscriptions
         for topic in topics_to_add:
-            self.logger.info(f"Adding subscription for ROS topic: {topic}")
+            self.logger.debug(f"Adding subscription for ROS topic: {topic}")
             mapping = new_subscriptions_config[topic]
             if not self._create_subscriber(mapping):
                  self.logger.error(f"Failed to create new subscriber for {topic}")
@@ -100,7 +100,7 @@ class TopicManager:
             # More granular checks could be added (e.g., for QoS, priority if it affects subscription)
             if current_mapping['ott_topic'] != new_mapping['ott'] or \
                current_mapping['message_type'] != new_mapping['message_type']:
-                self.logger.info(f"Recreating subscription for modified ROS topic: {topic}")
+                self.logger.debug(f"Recreating subscription for modified ROS topic: {topic}")
                 # Remove existing
                 if topic in self.subscriptions:
                     try:
@@ -189,6 +189,7 @@ class TopicManager:
             if message_class is None:
                 self.logger.error(f"Could not resolve message type {message_type_str} for topic {ros_topic}")
                 return False
+            self.logger.debug(f"Resolved message type for {ros_topic}: {message_class}")
             
             # Set up QoS profile
             qos = QoSProfile(
@@ -196,13 +197,18 @@ class TopicManager:
                 history=QoSHistoryPolicy.KEEP_LAST,
                 depth=1
             )
+            self.logger.debug(f"Using QoS profile for {ros_topic}: Reliability={qos.reliability}, History={qos.history}, Depth={qos.depth}")
             
-            self.logger.info(f"Creating subscriber for {ros_topic} -> {ott_topic} (priority: {priority})")
+            self.logger.debug(f"Creating subscriber for {ros_topic} -> {ott_topic} (priority: {priority})")
             
             # Create a generic callback
             def callback(msg):
-                self.logger.debug(f"Received message on {ros_topic}")
+                # Minimal log to reduce noise inside callback itself initially
+                self.logger.debug(f"Callback invoked for {ros_topic}")
                 self.handle_message(msg, ros_topic)
+            
+            # ADDED: Log before create_subscription
+            self.logger.debug(f"Attempting self.node.create_subscription for {ros_topic}...")
             
             # Create the subscriber using the dynamically resolved message type
             subscriber = self.node.create_subscription(
@@ -211,6 +217,9 @@ class TopicManager:
                 callback,
                 qos
             )
+
+            # ADDED: Log after create_subscription
+            self.logger.debug(f"Successfully returned from self.node.create_subscription for {ros_topic}")
             
             # Store subscriber information
             self.subscriptions[ros_topic] = {
@@ -220,7 +229,7 @@ class TopicManager:
                 'priority': priority
             }
             
-            self.logger.info(f"Successfully subscribed to {ros_topic} with message type {message_type_str}")
+            self.logger.debug(f"Successfully subscribed to {ros_topic} with message type {message_type_str}")
             return True
         except Exception as e:
             self.logger.error(f"Error creating subscriber for {mapping.get('ros_topic', '[unknown]')}: {e}")

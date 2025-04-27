@@ -35,87 +35,168 @@ import (
 	"github.com/open-teleop/controller/services"
 )
 
+// --- Main Application Entry Point ---
+
 func main() {
-	// Parse command line flags for initial setup
+	// --- Initial Setup & Bootstrap Config ---
+	configDir := parseFlagsAndResolveConfigDir()
+	bootstrapCfg, err := config.LoadBootstrapConfig(configDir)
+	if err != nil {
+		stdlog.Fatalf("Failed to load bootstrap configuration: %v", err)
+	}
+
+	// --- Initialize Logger ---
+	logger, err := initLogger(bootstrapCfg)
+	if err != nil {
+		stdlog.Fatalf("Failed to initialize logger: %v", err) // Use standard logger for this critical error
+	}
+	logger.Infof("Logger initialized.")
+
+	// --- Load Initial Operational Config ---
+	initialCfg, operationalConfigPath, err := loadInitialConfig(configDir, bootstrapCfg, logger)
+	if err != nil {
+		logger.Fatalf("Failed to load initial operational configuration: %v", err)
+	}
+
+	// --- Setup ZeroMQ Service ---
+	zmqService, err := setupZMQ(bootstrapCfg, initialCfg, logger)
+	if err != nil {
+		logger.Fatalf("Failed to setup ZeroMQ service: %v", err)
+	}
+
+	// --- Setup Config Service, ZMQ Handler & Publisher ---
+	teleopConfigService, configPublisher, err := setupConfigServiceAndHandlers(zmqService, operationalConfigPath, logger)
+	if err != nil {
+		logger.Fatalf("Failed to setup configuration service and handlers: %v", err)
+	}
+
+	// --- Get Managed Config (primary source for components) ---
+	cfg := teleopConfigService.GetCurrentConfig()
+	if cfg == nil {
+		logger.Warnf("Config from TeleopConfigService is nil after initialization, using initial load data for component setup.")
+		cfg = initialCfg // Fallback
+	}
+	logCoreConfigInfo(logger, cfg, bootstrapCfg)
+
+	// --- Setup Processing Components ---
+	messageDirector, topicRegistry, err := setupProcessingComponents(cfg, logger, zmqService, bootstrapCfg)
+	if err != nil {
+		logger.Fatalf("Failed to setup processing components: %v", err)
+	}
+
+	// --- Start ZeroMQ Service & Publish Initial Notification ---
+	if err := zmqService.Start(); err != nil {
+		logger.Fatalf("Failed to start ZeroMQ service: %v", err)
+	}
+	logger.Infof("ZeroMQ service started successfully")
+	if err := configPublisher.PublishConfigUpdatedNotification(); err != nil {
+		logger.Warnf("Warning: Failed to publish initial config notification: %v", err)
+	}
+
+	// --- Setup and Start HTTP Server ---
+	app, err := setupHTTPServer(cfg, teleopConfigService, logger, messageDirector, topicRegistry)
+	if err != nil {
+		logger.Fatalf("Failed to setup HTTP server: %v", err)
+	}
+	go startHTTPServer(app, bootstrapCfg.Server.HTTPPort, logger)
+
+	// --- Wait for Termination Signal & Graceful Shutdown ---
+	waitForShutdownSignal(logger)
+	performGracefulShutdown(app, messageDirector, zmqService, logger)
+
+	logger.Infof("Controller shut down gracefully.")
+}
+
+// --- Helper Functions for Initialization ---
+
+// parseFlagsAndResolveConfigDir handles command line flags and determines the absolute config path.
+func parseFlagsAndResolveConfigDir() string {
 	configDir := flag.String("config-dir", "./config", "Path to configuration directory containing controller_config.yaml")
 	flag.Parse()
 
-	// --- Find executable directory for relative paths ---
 	execPath, err := os.Executable()
 	if err != nil {
 		stdlog.Fatalf("Error determining executable path: %v", err)
 	}
 	execDir := filepath.Dir(execPath)
 
-	// --- Resolve config directory ---
-	// If config-dir is relative, make it relative to the executable or project structure
-	if !filepath.IsAbs(*configDir) {
-		if *configDir == "./config" {
-			// Special case for default, try to find config relative to project root
-			if _, err := os.Stat("./config"); os.IsNotExist(err) {
+	absoluteConfigDir := *configDir
+	if !filepath.IsAbs(absoluteConfigDir) {
+		if absoluteConfigDir == "./config" {
+			// Special case for default, try relative to executable first
+			candidateDir := filepath.Join(execDir, "config")
+			if _, err := os.Stat(candidateDir); err == nil {
+				absoluteConfigDir = candidateDir
+			} else {
+				// Try relative to project root (assuming executable is in controller/bin or similar)
 				parentDir := filepath.Dir(execDir)
-				candidateConfigDir := filepath.Join(parentDir, "config")
-				if _, err := os.Stat(candidateConfigDir); err == nil {
-					*configDir = candidateConfigDir
+				candidateDir = filepath.Join(parentDir, "config")
+				if _, err := os.Stat(candidateDir); err == nil {
+					absoluteConfigDir = candidateDir
 				} else {
-					gopath := os.Getenv("GOPATH")
-					if gopath != "" {
-						srcDir := filepath.Join(gopath, "src", "github.com", "open-teleop", "controller")
-						candidateConfigDir = filepath.Join(srcDir, "..", "config") // Assuming config is one level up from 'controller'
-						if _, err := os.Stat(candidateConfigDir); err == nil {
-							*configDir = candidateConfigDir
+					// Try relative to parent's parent (e.g., if in controller/cmd/controller)
+					grandparentDir := filepath.Dir(parentDir)
+					candidateDir = filepath.Join(grandparentDir, "config")
+					if _, err := os.Stat(candidateDir); err == nil {
+						absoluteConfigDir = candidateDir
+					} else {
+						// Fallback: check current working directory as last resort for ./config
+						if _, err := os.Stat("./config"); err == nil {
+							absoluteConfigDir, _ = filepath.Abs("./config") // Use absolute path of cwd/config
 						}
 					}
 				}
-				if _, err := os.Stat(*configDir); os.IsNotExist(err) {
-					stdlog.Fatalf("Could not find config directory. Checked ./config, %s, and GOPATH relative path. Please specify with --config-dir.", filepath.Join(filepath.Dir(execDir), "config"))
-				}
 			}
 		} else {
-			*configDir = filepath.Join(execDir, *configDir)
+			// If a relative path other than ./config is given, assume it's relative to executable
+			absoluteConfigDir = filepath.Join(execDir, absoluteConfigDir)
 		}
 	}
-	stdlog.Printf("Using configuration directory: %s", *configDir) // Log resolved path
 
-	// --- Load Bootstrap Configuration ---
-	bootstrapCfg, err := config.LoadBootstrapConfig(*configDir)
-	if err != nil {
-		stdlog.Fatalf("Failed to load bootstrap configuration: %v", err)
+	// Final check if resolved directory exists
+	if _, err := os.Stat(absoluteConfigDir); os.IsNotExist(err) {
+		stdlog.Fatalf("Resolved configuration directory does not exist: %s", absoluteConfigDir)
 	}
 
-	// --- Initialize Custom Logger ---
-	// Determine final log level (Bootstrap Config ONLY)
-	finalLogLevel := bootstrapCfg.Logging.Level
+	stdlog.Printf("Using configuration directory: %s", absoluteConfigDir)
+	return absoluteConfigDir
+}
 
-	// Determine final log path (Bootstrap Config ONLY)
-	finalLogPath := bootstrapCfg.Logging.LogPath // Get path from bootstrap config value
+// initLogger initializes the custom logger based on bootstrap configuration.
+func initLogger(bootstrapCfg *config.BootstrapConfig) (customlog.Logger, error) {
+	finalLogLevel := bootstrapCfg.Logging.Level
+	finalLogPath := bootstrapCfg.Logging.LogPath
 	if finalLogPath == "" {
 		stdlog.Printf("Log path not specified in bootstrap config. Disabling file logging.")
 	} else {
 		stdlog.Printf("Using log directory: %s (from bootstrap config)", finalLogPath)
 	}
-
-	// Initialize logger with determined level and path
 	logger, err := customlog.NewLogrusLogger(finalLogLevel, finalLogPath)
 	if err != nil {
-		stdlog.Fatalf("Failed to initialize logger: %v", err) // Use standard logger for this critical error
+		return nil, fmt.Errorf("failed to initialize logger: %w", err)
 	}
 	logger.Infof("Logger initialized: Level=%s, Directory='%s'", finalLogLevel, finalLogPath)
+	return logger, nil
+}
 
-	// --- Load Initial Operational Configuration (needed for early checks/logging) ---
-	operationalConfigPath := filepath.Join(*configDir, bootstrapCfg.Data.TeleopConfigFilename)
-	logger.Infof("Checking initial operational configuration from: %s", operationalConfigPath)
-	initialCfg, err := config.LoadConfig(operationalConfigPath) // Load initial config directly
+// loadInitialConfig loads the initial operational configuration file.
+func loadInitialConfig(configDir string, bootstrapCfg *config.BootstrapConfig, logger customlog.Logger) (*config.Config, string, error) {
+	operationalConfigPath := filepath.Join(configDir, bootstrapCfg.Data.TeleopConfigFilename)
+	logger.Infof("Loading initial operational configuration from: %s", operationalConfigPath)
+	initialCfg, err := config.LoadConfig(operationalConfigPath)
 	if err != nil {
-		// If LoadConfig fails, err will be non-nil. LoadConfig should handle returning an error if the file is empty/invalid.
-		logger.Fatalf("Failed to load initial operational configuration from %s: %v. Cannot proceed.", operationalConfigPath, err)
+		return nil, operationalConfigPath, fmt.Errorf("failed to load initial operational configuration from %s: %w", operationalConfigPath, err)
 	}
-	// If we reach here, err is nil, assume initialCfg is valid and non-nil.
+	if initialCfg == nil {
+		return nil, operationalConfigPath, fmt.Errorf("initial operational configuration loaded as nil from %s", operationalConfigPath)
+	}
 	logger.Infof("Initial operational configuration loaded (ID: %s) for setup.", initialCfg.ConfigID)
+	return initialCfg, operationalConfigPath, nil
+}
 
-	// --- Initialize ZeroMQ service ---
-	// Note: Using initialCfg here only if NewZeroMQService requires operational config parts.
-	// Ideally, it should only depend on bootstrap config for binding.
+// setupZMQ initializes the ZeroMQ service.
+func setupZMQ(bootstrapCfg *config.BootstrapConfig, initialCfg *config.Config, logger customlog.Logger) (*zeromq.ZeroMQService, error) {
+	logger.Infof("Initializing ZeroMQ service...")
 	zmqService, err := zeromq.NewZeroMQService(
 		bootstrapCfg.ZeroMQ.RequestBindAddress,
 		bootstrapCfg.ZeroMQ.PublishBindAddress,
@@ -123,158 +204,139 @@ func main() {
 		logger,
 	)
 	if err != nil {
-		logger.Fatalf("Failed to initialize ZeroMQ service: %v", err)
+		return nil, fmt.Errorf("failed to initialize ZeroMQ service: %w", err)
 	}
+	logger.Infof("ZeroMQ service initialized.")
+	return zmqService, nil
+}
 
-	// --- Initialize Teleop Configuration Service ---
-	// Publisher will be injected later.
+// setupConfigServiceAndHandlers initializes the config service, registers ZMQ handler, creates publisher, and links them.
+func setupConfigServiceAndHandlers(zmqService *zeromq.ZeroMQService, operationalConfigPath string, logger customlog.Logger) (services.TeleopConfigService, services.ConfigPublisher, error) {
 	logger.Infof("Initializing Teleop Configuration Service for: %s", operationalConfigPath)
-	teleopConfigService, err := services.NewTeleopConfigService(operationalConfigPath, logger) // Create service without publisher first
+	teleopConfigService, err := services.NewTeleopConfigService(operationalConfigPath, logger)
 	if err != nil {
+		// Log warning but allow to proceed, service might recover or config can be set via API
 		logger.Warnf("Error initializing TeleopConfigService: %v. Operational config might be missing initially.", err)
+		// Return the partially initialized service anyway, but nil publisher and no error to allow proceeding
+		// Caller must handle nil config from service later.
+		// Alternatively, return the error: return nil, nil, fmt.Errorf("failed to initialize TeleopConfigService: %w", err)
 	}
 
-	// --- Register ZMQ Config Request Handler ---
-	// The handler will use the teleopConfigService to get the *current* config when requested.
+	logger.Infof("Registering ZeroMQ Config Request Handler...")
 	zeromq.RegisterZmqConfigRequestHandler(zmqService, teleopConfigService, logger)
 
-	// --- Create ZMQ Config Publisher ---
-	// The publisher also uses the service to get the current config when sending notifications.
+	logger.Infof("Creating ZeroMQ Config Publisher...")
+	// Publisher needs a ConfigGetter, which TeleopConfigService implements.
 	configPublisher := zeromq.NewConfigPublisher(zmqService, teleopConfigService, logger)
 
-	// --- Inject Publisher into Service ---
-	// Now that both exist, link them.
+	logger.Infof("Injecting Publisher into Config Service...")
 	teleopConfigService.SetPublisher(configPublisher)
 
-	// --- Get Managed Operational Configuration from Service ---
-	// Use the config managed by the service for components that might need updates later (even if not dynamic yet)
-	cfg := teleopConfigService.GetCurrentConfig() // Get the config loaded/managed by the service
-	if cfg == nil {
-		// If service failed initial load, fallback to the initial data we loaded earlier
-		logger.Warnf("Config from TeleopConfigService is nil after initialization, using initial load data for component setup.")
-		cfg = initialCfg // Fallback to initially loaded data for the rest of the setup
-	}
+	logger.Infof("Configuration Service and ZMQ components initialized and linked.")
+	return teleopConfigService, configPublisher, nil // Return nil error even if service init had warning
+}
 
-	// Log the configuration details (using managed config 'cfg')
+// logCoreConfigInfo logs key details from the loaded configurations.
+func logCoreConfigInfo(logger customlog.Logger, cfg *config.Config, bootstrapCfg *config.BootstrapConfig) {
 	logger.Infof("Using configuration for setup: ID: %s, Version: %s", cfg.ConfigID, cfg.Version)
 	logger.Infof("Robot ID: %s", cfg.RobotID)
-
-	// Log ZeroMQ settings (using bootstrap for bind, managed operational for connect/subscribe)
 	logger.Infof("ZeroMQ Request Bind Address: %s (from bootstrap config)", bootstrapCfg.ZeroMQ.RequestBindAddress)
 	logger.Infof("ZeroMQ Publish Bind Address: %s (from bootstrap config)", bootstrapCfg.ZeroMQ.PublishBindAddress)
 	logger.Infof("ZeroMQ Gateway Connect Address: %s (from operational config)", cfg.ZeroMQ.GatewayConnectAddress)
 	logger.Infof("ZeroMQ Gateway Subscribe Address: %s (from operational config)", cfg.ZeroMQ.GatewaySubscribeAddress)
-
-	// Log topic mappings summary (using managed config 'cfg')
 	inboundTopics := cfg.GetTopicMappingsByDirection("INBOUND")
 	outboundTopics := cfg.GetTopicMappingsByDirection("OUTBOUND")
 	logger.Infof("Loaded %d topic mappings (%d inbound, %d outbound)",
 		len(cfg.TopicMappings), len(inboundTopics), len(outboundTopics))
+}
 
-	// --- Initialize Topic Registry (using managed config 'cfg') ---
+// setupProcessingComponents initializes ROS parser, processing chain (registry, processor, handler, director).
+func setupProcessingComponents(cfg *config.Config, logger customlog.Logger, zmqService *zeromq.ZeroMQService, bootstrapCfg *config.BootstrapConfig) (*processing.MessageDirector, *processing.TopicRegistry, error) {
+	logger.Infof("Initializing Processing Components...")
+
 	logger.Infof("Initializing Topic Registry")
 	topicRegistry := processing.NewTopicRegistry(logger)
 	topicRegistry.LoadFromConfig(cfg) // Load with managed config
-	// NOTE: TopicRegistry will NOT automatically update if config changes via API unless explicitly reloaded.
+	logger.Infof("Topic Registry initialized.")
 
-	// --- Initialize ROS Parser ---
 	logger.Infof("Initializing ROS Parser")
-	// Set the logger for rosparser package
 	rosparser.SetLogger(logger)
 	if err := rosparser.Initialize(); err != nil {
-		logger.Fatalf("Failed to initialize ROS parser: %v", err)
+		return nil, nil, fmt.Errorf("failed to initialize ROS parser: %w", err)
 	}
-	defer rosparser.Shutdown()
+	// Note: defer rosparser.Shutdown() should be called in main near the end
+	logger.Infof("ROS Parser initialized.")
 
-	// --- Create ROS Message Processor (using TopicRegistry which has managed config) ---
 	logger.Infof("Creating ROS Message Processor")
 	rosProcessor := processing.NewRosMessageProcessor(logger, topicRegistry)
+	logger.Infof("ROS Message Processor created.")
 
-	// --- Create Result Handler ---
 	logger.Infof("Creating Result Handler")
 	resultHandler := processing.NewLoggingResultHandler(logger, zmqService)
+	logger.Infof("Result Handler created.")
 
-	// --- Initialize and configure Message Director (using managed config 'cfg') ---
 	logger.Infof("Initializing Message Director")
 	directorOptions := &processing.DirectorOptions{
 		DefaultQueueSize: 1000, // TODO: Consider making this configurable (perhaps via bootstrap?)
 	}
-	messageDirector := processing.NewMessageDirector(cfg, logger, topicRegistry, directorOptions) // Uses managed config
-	// NOTE: MessageDirector will NOT automatically update if config changes via API unless explicitly reloaded.
-
-	// Initialize with worker counts from bootstrap config
+	messageDirector := processing.NewMessageDirector(cfg, logger, topicRegistry, directorOptions)
 	messageDirector.Initialize(
 		bootstrapCfg.Processing.HighPriorityWorkers,
 		bootstrapCfg.Processing.StandardPriorityWorkers,
 		bootstrapCfg.Processing.LowPriorityWorkers,
 	)
-
-	// Set processor and result handler
 	messageDirector.SetProcessor(rosProcessor.CreateProcessorFunc())
 	messageDirector.SetResultHandler(resultHandler.CreateHandlerFunc())
-
-	// Connect Message Director to ZeroMQ service
 	zmqService.SetMessageDirector(messageDirector)
-
-	// Start the Message Director
 	messageDirector.Start()
+	logger.Infof("Message Director initialized and started.")
 
-	// --- Start the ZeroMQ service ---
-	if err := zmqService.Start(); err != nil {
-		logger.Fatalf("Failed to start ZeroMQ service: %v", err)
-	}
-	logger.Infof("ZeroMQ service started successfully")
+	logger.Infof("Processing Components setup complete.")
+	return messageDirector, topicRegistry, nil
+}
 
-	// Publish initial config notification using the publisher
-	if err := configPublisher.PublishConfigUpdatedNotification(); err != nil {
-		logger.Warnf("Warning: Failed to publish initial config notification: %v", err)
-	}
-
-	// --- Create Fiber app (HTTP Server) ---
+// setupHTTPServer creates the Fiber app, adds middleware, and registers routes.
+func setupHTTPServer(cfg *config.Config, teleopConfigService services.TeleopConfigService, logger customlog.Logger, messageDirector *processing.MessageDirector, topicRegistry *processing.TopicRegistry) (*fiber.App, error) {
+	logger.Infof("Setting up HTTP Server (Fiber)...")
 	app := fiber.New(fiber.Config{
 		AppName:      "Open-Teleop Controller",
 		ErrorHandler: customErrorHandler,
-		// Use operational config for server behavior settings - uses initial config
-		ReadTimeout: time.Duration(cfg.Controller.Server.RequestTimeout) * time.Second,
-		BodyLimit:   cfg.Controller.Server.MaxRequestSize * 1024 * 1024, // Convert MB to bytes
-		IdleTimeout: 7 * time.Second,                                    // Add idle timeout slightly > shutdown timeout
+		ReadTimeout:  time.Duration(cfg.Controller.Server.RequestTimeout) * time.Second,
+		BodyLimit:    cfg.Controller.Server.MaxRequestSize * 1024 * 1024, // Convert MB to bytes
+		IdleTimeout:  7 * time.Second,
 	})
 
-	// Add middleware
+	logger.Infof("Adding HTTP middleware...")
 	app.Use(fiberlogger.New())
 	app.Use(recover.New())
 
-	// --- Serve Static Files (Web UI) first ---
-	// Serve index.html from ./web/static for the root path
-	// Path is relative to the project root, as run_controller.sh executes from there.
+	logger.Infof("Registering static file serving...")
+	// TODO: Make static path configurable?
 	app.Static("/", "controller/web/static", fiber.Static{
 		Index:         "index.html",
 		CacheDuration: 1 * time.Second, // Disable caching for dev
 	})
 
-	// --- Set up basic API routes (uses initial operational config 'cfg') ---
-	app.Get("/api/status", func(c *fiber.Ctx) error { // Changed route from / to /api/status
+	logger.Infof("Registering API routes...")
+	// Basic Status/Health Routes (using potentially initial config via cfg)
+	app.Get("/api/status", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"status":    "online",
-			"version":   cfg.Version,  // Uses initial config
-			"config_id": cfg.ConfigID, // Uses initial config
-			"robot_id":  cfg.RobotID,  // Uses initial config
+			"version":   cfg.Version,
+			"config_id": cfg.ConfigID,
+			"robot_id":  cfg.RobotID,
 		})
 	})
-
 	app.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"status": "healthy",
-		})
+		return c.JSON(fiber.Map{"status": "healthy"})
 	})
-
-	app.Get("/config", func(c *fiber.Ctx) error { // THIS OLD /config summary endpoint still uses initial config
+	app.Get("/config", func(c *fiber.Ctx) error { // Old summary endpoint
 		inbound := cfg.GetTopicMappingsByDirection("INBOUND")
 		outbound := cfg.GetTopicMappingsByDirection("OUTBOUND")
 		return c.JSON(fiber.Map{
 			"config_id":      cfg.ConfigID,
 			"version":        cfg.Version,
-			"last_updated":   cfg.LastUpdated, // This field might not be in the initial file?
+			"last_updated":   cfg.LastUpdated,
 			"robot_id":       cfg.RobotID,
 			"topic_count":    len(cfg.TopicMappings),
 			"inbound_count":  len(inbound),
@@ -282,11 +344,11 @@ func main() {
 		})
 	})
 
-	// --- Register NEW Teleop Configuration API Routes ---
+	// New Teleop Config API Routes (using service for live data)
 	api.RegisterConfigRoutes(app, teleopConfigService, logger)
 
-	// --- WebSocket Route for Control ---
-	app.Use("/ws", func(c *fiber.Ctx) error { // Middleware to check if it's a WebSocket upgrade request
+	// WebSocket Route
+	app.Use("/ws", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
 			c.Locals("allowed", true)
 			return c.Next()
@@ -294,68 +356,74 @@ func main() {
 		logger.Warnf("Non-websocket request to /ws endpoint from %s", c.IP())
 		return fiber.ErrUpgradeRequired
 	})
-
 	app.Get("/ws/control", websocket.New(func(conn *websocket.Conn) {
-		// Call the handler from the api package, passing dependencies
-		// Pass TopicRegistry which currently holds the *initial* config
+		// Note: TopicRegistry passed here uses the config loaded at startup
 		api.ControlWebSocketHandler(conn, logger, messageDirector, topicRegistry)
 	}))
 
-	// --- Start HTTP server in a goroutine ---
-	go func() {
-		port := bootstrapCfg.Server.HTTPPort // Use bootstrap config for server port
-		logger.Infof("Starting HTTP server on port %d", port)
-		if err := app.Listen(fmt.Sprintf(":%d", port)); err != nil {
-			// Check if the error is due to server shutting down, which is expected
-			if err != http.ErrServerClosed {
-				logger.Fatalf("Server error: %v", err)
-			}
-		}
-	}()
+	logger.Infof("HTTP Server setup complete.")
+	return app, nil
+}
 
-	// --- Wait for termination signal ---
+// startHTTPServer starts the Fiber app listener.
+func startHTTPServer(app *fiber.App, port int, logger customlog.Logger) {
+	logger.Infof("Starting HTTP server on port %d", port)
+	if err := app.Listen(fmt.Sprintf(":%d", port)); err != nil {
+		if !errors.Is(err, http.ErrServerClosed) {
+			logger.Fatalf("HTTP Server Listen error: %v", err)
+		}
+	}
+	logger.Infof("HTTP server listener stopped.")
+}
+
+// waitForShutdownSignal blocks until SIGINT or SIGTERM is received.
+func waitForShutdownSignal(logger customlog.Logger) {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	logger.Infof("Received termination signal. Shutting down...")
+	receivedSignal := <-quit
+	logger.Infof("Received termination signal: %v. Shutting down...", receivedSignal)
+}
 
-	// --- Graceful Shutdown ---
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // Reduced timeout
+// performGracefulShutdown handles the shutdown of components.
+func performGracefulShutdown(app *fiber.App, messageDirector *processing.MessageDirector, zmqService *zeromq.ZeroMQService, logger customlog.Logger) {
+	logger.Infof("Performing graceful shutdown...")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // Timeout for shutdown
 	defer cancel()
 
-	// Shutdown Fiber app
+	// Shutdown Fiber app first
+	logger.Infof("Shutting down HTTP server...")
 	if err := app.ShutdownWithContext(ctx); err != nil {
 		logger.Errorf("Fiber app shutdown error: %v", err)
 	}
 
 	// Stop the message director
+	logger.Infof("Stopping Message Director...")
 	messageDirector.Stop()
 
 	// Stop the ZeroMQ service
+	logger.Infof("Stopping ZeroMQ Service...")
 	zmqService.Stop()
 
-	// Shutdown ROS parser
+	// Shutdown ROS parser (deferred in main originally, called here explicitly for order)
+	logger.Infof("Shutting down ROS Parser...")
 	rosparser.Shutdown()
 
-	logger.Infof("Controller shut down gracefully.")
+	logger.Infof("Graceful shutdown sequence complete.")
 }
 
-// customErrorHandler provides a basic JSON error response
+// customErrorHandler provides a basic JSON error response for Fiber.
 func customErrorHandler(ctx *fiber.Ctx, err error) error {
-	// Status code defaults to 500
 	code := fiber.StatusInternalServerError
 	message := "Internal Server Error"
-
-	// Retrieve the custom status code if it's a *fiber.Error
 	var e *fiber.Error
 	if errors.As(err, &e) {
 		code = e.Code
 		message = e.Message
 	}
+	// Log the error internally before sending response
+	// TODO: Inject logger here? For now, use stdlib but could be better.
+	stdlog.Printf("[ERROR] Fiber Error: Code=%d, Message=%s, Error=%v, Path=%s", code, message, err, ctx.Path())
 
-	// Send generic JSON error response
 	ctx.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
-	return ctx.Status(code).JSON(fiber.Map{
-		"error": message,
-	})
+	return ctx.Status(code).JSON(fiber.Map{"error": message})
 }

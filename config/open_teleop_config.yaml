@@ -28,17 +28,17 @@ topic_mappings:
     direction: "OUTBOUND"
     source_type: "ROS2_CDR"
 
-  - ros_topic: "/int64_test"
-    ott: "teleop.int64_test"
-    priority: "STANDARD"
-    message_type: "std_msgs/msg/Int64"
-    direction: "OUTBOUND"
-    source_type: "ROS2_CDR"
-
   - ros_topic: "/string"
     ott: "teleop.status"
     priority: "STANDARD"
     message_type: "std_msgs/msg/String"
+    direction: "OUTBOUND"
+    source_type: "ROS2_CDR"
+
+  - ros_topic: "/uint8"
+    ott: "teleop.uint8_value"
+    priority: "STANDARD"
+    message_type: "std_msgs/msg/UInt8"
     direction: "OUTBOUND"
     source_type: "ROS2_CDR"
 
