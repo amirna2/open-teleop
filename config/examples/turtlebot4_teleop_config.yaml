@@ -1,0 +1,98 @@
+# TurtleBot 4 Open-Teleop Configuration
+version: "2.0"
+config_id: "turtlebot4-config-2025-03-27"
+lastUpdated: "2025-03-27T00:00:00Z"
+robot_id: "turtlebot4-jazzy-simulator"
+
+# Topic mappings configuration
+topic_mappings:
+  # Sensor data (OUTBOUND - from ROS to controller)
+  - ros_topic: "/battery_state"
+    ott: "teleop.sensor.battery"
+    priority: "STANDARD"
+    message_type: "sensor_msgs/msg/BatteryState"
+    direction: "OUTBOUND"
+    source_type: "ROS2_CDR"
+  
+  - ros_topic: "/oakd/rgb/preview/image_raw"
+    ott: "teleop.sensor.image"
+    priority: "HIGH" 
+    message_type: "sensor_msgs/msg/Image"
+    direction: "OUTBOUND"
+    source_type: "ROS2_CDR"
+    
+  - ros_topic: "/oakd/rgb/preview/image_raw/compressed"
+    ott: "teleop.sensor.image.compressed"
+    priority: "HIGH" 
+    message_type: "sensor_msgs/msg/CompressedImage"
+    direction: "OUTBOUND"
+    source_type: "ROS2_CDR"
+    
+  - ros_topic: "/oakd/rgb/preview/depth"
+    ott: "teleop.sensor.depth"
+    priority: "STANDARD"
+    message_type: "sensor_msgs/msg/Image"
+    direction: "OUTBOUND"
+    source_type: "ROS2_CDR"
+
+  - ros_topic: "/scan"
+    ott: "teleop.sensor.scan"
+    priority: "HIGH"
+    message_type: "sensor_msgs/msg/LaserScan"
+    direction: "OUTBOUND"
+    source_type: "ROS2_CDR"
+
+  - ros_topic: "/odom"
+    ott: "teleop.sensor.odometry"
+    priority: "STANDARD"
+    message_type: "nav_msgs/msg/Odometry"
+    direction: "OUTBOUND"
+    source_type: "ROS2_CDR"
+
+  - ros_topic: "/bumper_contact"
+    ott: "teleop.sensor.bumper"
+    priority: "HIGH"
+    message_type: "std_msgs/msg/Bool"
+    direction: "OUTBOUND"
+    source_type: "ROS2_CDR"
+
+  - ros_topic: "/hazard_detection"
+    ott: "teleop.sensor.hazard"
+    priority: "HIGH"
+    message_type: "irobot_create_msgs/msg/HazardDetectionVector"
+    direction: "OUTBOUND"
+    source_type: "ROS2_CDR"
+
+  # Robot control (INBOUND - from controller to ROS)
+  - ros_topic: "/cmd_vel"
+    ott: "teleop.control.velocity"
+    priority: "HIGH"
+    message_type: "geometry_msgs/msg/Twist"
+    direction: "INBOUND"
+    source_type: "ROS2_CDR"
+
+  - ros_topic: "/cmd_audio"
+    ott: "teleop.control.audio"
+    priority: "LOW"
+    message_type: "irobot_create_msgs/msg/AudioNoteVector"
+    direction: "INBOUND"
+    source_type: "ROS2_CDR"
+
+  - ros_topic: "/cmd_lightring"
+    ott: "teleop.control.lightring"
+    priority: "LOW"
+    message_type: "irobot_create_msgs/msg/LightringLeds"
+    direction: "INBOUND"
+    source_type: "ROS2_CDR"
+
+# Default settings for topics
+defaults:
+  priority: "STANDARD"
+  direction: "OUTBOUND"
+  source_type: "ROS2_CDR"
+
+# Throttling settings per priority level (0 = no throttling)
+throttle_rates:
+  high_hz: 30
+  standard_hz: 10
+  low_hz: 1 

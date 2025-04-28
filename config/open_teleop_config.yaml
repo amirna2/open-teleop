@@ -7,35 +7,35 @@ robot_id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
 # Topic mappings configuration
 topic_mappings:
   # Sensor data (OUTBOUND - from ROS to controller)
-  - ros_topic: "/batterystate"
+  - ros_topic: "/ott/batterystate"
     ott: "teleop.sensor.battery"
     priority: "STANDARD"
     message_type: "sensor_msgs/msg/BatteryState"
     direction: "OUTBOUND"
     source_type: "ROS2_CDR"
   
-  - ros_topic: "/image"
+  - ros_topic: "/ott/image"
     ott: "teleop.sensor.image"
     priority: "STANDARD"
     message_type: "sensor_msgs/msg/Image"
     direction: "OUTBOUND"
     source_type: "ROS2_CDR"
     
-  - ros_topic: "/image/compressed"
+  - ros_topic: "/ott/image/compressed"
     ott: "teleop.sensor.image.compressed"
     priority: "STANDARD"
     message_type: "sensor_msgs/msg/CompressedImage"
     direction: "OUTBOUND"
     source_type: "ROS2_CDR"
 
-  - ros_topic: "/string"
+  - ros_topic: "/ott/string"
     ott: "teleop.status"
     priority: "STANDARD"
     message_type: "std_msgs/msg/String"
     direction: "OUTBOUND"
     source_type: "ROS2_CDR"
 
-  - ros_topic: "/uint8"
+  - ros_topic: "/ott/uint8"
     ott: "teleop.uint8_value"
     priority: "STANDARD"
     message_type: "std_msgs/msg/UInt8"
@@ -43,7 +43,7 @@ topic_mappings:
     source_type: "ROS2_CDR"
 
 # Robot control (INBOUND - from controller to ROS)
-  - ros_topic: "/cmd_vel"
+  - ros_topic: "/ott/cmd_vel"
     ott: "teleop.control.velocity"
     priority: "HIGH"
     message_type: "geometry_msgs/msg/Twist"
