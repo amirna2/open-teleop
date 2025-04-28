@@ -10,8 +10,9 @@ class MessageConverter:
     Responsible for converting between ROS messages and OTT messages.
     """
     
-    def __init__(self, logger=None):
+    def __init__(self, node, logger=None):
         """Initialize the message converter."""
+        self.node = node # Store node reference
         self.logger = logger
             
     def convert_to_ros_message(self, message_type_str, json_data):
@@ -46,8 +47,27 @@ class MessageConverter:
             # Create an instance of the message
             ros_message = message_class()
             
-            # Populate the message with data from JSON
-            self._populate_ros_message(ros_message, json_data)
+            # --- Special handling for TwistStamped header ---
+            if message_type_str == "geometry_msgs/msg/TwistStamped":
+                if self.logger:
+                     self.logger.debug(f"Populating header for TwistStamped")
+                try:
+                    frame_id = 'base_link' # TODO: Make this configurable
+                    ros_message.header.stamp = self.node.get_clock().now().to_msg()
+                    ros_message.header.frame_id = frame_id
+                except Exception as e:
+                    if self.logger:
+                        self.logger.error(f"Failed to populate TwistStamped header: {e}")
+            # --- End special handling ---
+            
+            # --- Populate the message with data from JSON --- 
+            if message_type_str == "geometry_msgs/msg/TwistStamped":
+                # For TwistStamped, populate the nested 'twist' field
+                self._populate_ros_message(ros_message.twist, json_data)
+            else:
+                # For other types, populate the main message object
+                self._populate_ros_message(ros_message, json_data)
+            # --- End population logic ---
             
             return ros_message
             

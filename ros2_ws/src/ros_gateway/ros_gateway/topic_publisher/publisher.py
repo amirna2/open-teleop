@@ -4,6 +4,7 @@
 import json
 from geometry_msgs.msg import Twist
 import importlib # Added for dynamic type resolution
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy # <<< Import QoS
 
 class TopicPublisher:
     """
@@ -77,12 +78,31 @@ class TopicPublisher:
         if message_class is None:
             return False
 
+        # Consider autodiscovery of QoS settings based on discovery of pub/sub QoS settings
+        best_effort_qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1 # Keep only the latest for velocity commands is often best
+        )
+        reliable_qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=10 # Default depth if needed
+        )
+
+        # TODO: Choose QoS based on mapping config or default?
+        # For now, hardcode BEST_EFFORT for /cmd_vel, RELIABLE otherwise
+        chosen_qos = reliable_qos # Default
+        if ros_topic == "/cmd_vel": # Specific override for cmd_vel
+            self.logger.info(f"Using BEST_EFFORT QoS for {ros_topic}")
+            chosen_qos = best_effort_qos
+        else:
+             self.logger.debug(f"Using default RELIABLE QoS for {ros_topic}")
+
         try:
-            # TODO: Make QoS configurable?
-            qos_profile = 10
-            publisher = self.node.create_publisher(message_class, ros_topic, qos_profile)
+            publisher = self.node.create_publisher(message_class, ros_topic, chosen_qos)
             self.publishers[ott_topic] = publisher
-            self.logger.debug(f"Created publisher for OTT='{ott_topic}' -> ROS='{ros_topic}' (Type: {msg_type_str})")
+            self.logger.debug(f"Created publisher for OTT='{ott_topic}' -> ROS='{ros_topic}' (Type: {msg_type_str}, QoS: {chosen_qos.reliability})")
             return True
         except Exception as e:
             self.logger.error(f"Error creating publisher for ROS topic '{ros_topic}': {e}")
