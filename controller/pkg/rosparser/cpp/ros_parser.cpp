@@ -251,11 +251,56 @@ bool field_to_json(
                         if (g_debug_logging_enabled) std::cerr << "        [vector access] int8[] field=\"" << member.name_ << "\" size=" << array_size << " data_ptr=" << static_cast<const void*>(array_data_ptr) << std::endl;
                         break;
                     }
-                    // ... other integer types ...
-                    case ROS_TYPE_BOOL: { // Note: std::vector<bool> is specialized, be careful
-                        // std::vector<bool> might not store elements contiguously.
-                        // Accessing .data() is complex/non-standard. Falling back to element-by-element access might be safer if needed.
-                         if (g_debug_logging_enabled) std::cerr << "        [vector access] WARNING: std::vector<bool> direct data access skipped for field " << member.name_ << ". Iteration needed." << std::endl;
+                    case ROS_TYPE_INT16: {
+                        const auto* vec_ptr = static_cast<const std::vector<int16_t>*>(vector_ptr_generic);
+                        if (!vec_ptr) { if (g_debug_logging_enabled) std::cerr << "Vector cast failed for int16[] " << member.name_ << std::endl; return false; }
+                        array_size = vec_ptr->size();
+                        array_data_ptr = reinterpret_cast<const uint8_t*>(vec_ptr->data());
+                        if (g_debug_logging_enabled) std::cerr << "        [vector access] int16[] field=\"" << member.name_ << "\" size=" << array_size << " data_ptr=" << static_cast<const void*>(array_data_ptr) << std::endl;
+                        break;
+                    }
+                    case ROS_TYPE_UINT16: {
+                        const auto* vec_ptr = static_cast<const std::vector<uint16_t>*>(vector_ptr_generic);
+                        if (!vec_ptr) { if (g_debug_logging_enabled) std::cerr << "Vector cast failed for uint16[] " << member.name_ << std::endl; return false; }
+                        array_size = vec_ptr->size();
+                        array_data_ptr = reinterpret_cast<const uint8_t*>(vec_ptr->data());
+                        if (g_debug_logging_enabled) std::cerr << "        [vector access] uint16[] field=\"" << member.name_ << "\" size=" << array_size << " data_ptr=" << static_cast<const void*>(array_data_ptr) << std::endl;
+                        break;
+                    }
+                    case ROS_TYPE_INT32: {
+                        const auto* vec_ptr = static_cast<const std::vector<int32_t>*>(vector_ptr_generic);
+                        if (!vec_ptr) { if (g_debug_logging_enabled) std::cerr << "Vector cast failed for int32[] " << member.name_ << std::endl; return false; }
+                        array_size = vec_ptr->size();
+                        array_data_ptr = reinterpret_cast<const uint8_t*>(vec_ptr->data());
+                        if (g_debug_logging_enabled) std::cerr << "        [vector access] int32[] field=\"" << member.name_ << "\" size=" << array_size << " data_ptr=" << static_cast<const void*>(array_data_ptr) << std::endl;
+                        break;
+                    }
+                    case ROS_TYPE_UINT32: {
+                        const auto* vec_ptr = static_cast<const std::vector<uint32_t>*>(vector_ptr_generic);
+                        if (!vec_ptr) { if (g_debug_logging_enabled) std::cerr << "Vector cast failed for uint32[] " << member.name_ << std::endl; return false; }
+                        array_size = vec_ptr->size();
+                        array_data_ptr = reinterpret_cast<const uint8_t*>(vec_ptr->data());
+                        if (g_debug_logging_enabled) std::cerr << "        [vector access] uint32[] field=\"" << member.name_ << "\" size=" << array_size << " data_ptr=" << static_cast<const void*>(array_data_ptr) << std::endl;
+                        break;
+                    }
+                    case ROS_TYPE_INT64: {
+                        const auto* vec_ptr = static_cast<const std::vector<int64_t>*>(vector_ptr_generic);
+                        if (!vec_ptr) { if (g_debug_logging_enabled) std::cerr << "Vector cast failed for int64[] " << member.name_ << std::endl; return false; }
+                        array_size = vec_ptr->size();
+                        array_data_ptr = reinterpret_cast<const uint8_t*>(vec_ptr->data());
+                        if (g_debug_logging_enabled) std::cerr << "        [vector access] int64[] field=\"" << member.name_ << "\" size=" << array_size << " data_ptr=" << static_cast<const void*>(array_data_ptr) << std::endl;
+                        break;
+                    }
+                    case ROS_TYPE_UINT64: {
+                        const auto* vec_ptr = static_cast<const std::vector<uint64_t>*>(vector_ptr_generic);
+                        if (!vec_ptr) { if (g_debug_logging_enabled) std::cerr << "Vector cast failed for uint64[] " << member.name_ << std::endl; return false; }
+                        array_size = vec_ptr->size();
+                        array_data_ptr = reinterpret_cast<const uint8_t*>(vec_ptr->data());
+                        if (g_debug_logging_enabled) std::cerr << "        [vector access] uint64[] field=\"" << member.name_ << "\" size=" << array_size << " data_ptr=" << static_cast<const void*>(array_data_ptr) << std::endl;
+                        break;
+                    }
+                    case ROS_TYPE_BOOL: {
+                        if (g_debug_logging_enabled) std::cerr << "        [vector access] WARNING: std::vector<bool> direct data access skipped for field " << member.name_ << ". Iteration needed." << std::endl;
                         // Handle bool vector element by element later in the loop
                          array_size = 0; // Set to 0 to prevent bulk processing
                          array_data_ptr = nullptr;
@@ -709,7 +754,7 @@ int RosParser_ParseToJson(
         MessageTypeSupport introspection_support_wrapper;
         if (!get_message_type_support(message_type, introspection_support_wrapper)) {
             std::string err = "Unsupported message type (introspection): " + std::string(message_type);
-            if (error_msg) *error_msg = allocate_string(err);
+            if (error_msg) *error_msg = allocate_string(err.c_str());
             std::cerr << "[RosParser] ERROR: Failed to get introspection typesupport." << std::endl;
             return ROS_PARSER_ERROR_UNSUPPORTED_TYPE;
         }
@@ -748,7 +793,7 @@ int RosParser_ParseToJson(
             std::cerr << "[RosParser] INFO: RMW typesupport loaded (" << rmw_identifier << ")." << std::endl;
         } catch (const std::exception& e) {
             std::string err = "Failed to get RMW typesupport ('" + rmw_identifier + "') for " + std::string(message_type) + ": " + e.what();
-            if (error_msg) *error_msg = allocate_string(err);
+            if (error_msg) *error_msg = allocate_string(err.c_str());
             std::cerr << "[RosParser] ERROR: " << err << std::endl;
             return ROS_PARSER_ERROR_UNSUPPORTED_TYPE;
         }
@@ -759,23 +804,23 @@ int RosParser_ParseToJson(
         serialized_msg_view.get_rcl_serialized_message().buffer_capacity = message_size;
 
         // Log the reported size before allocating
-        std::cerr << "[RosParser] DEBUG: Reported message size (members->size_of_): " << members->size_of_ << " for type " << message_type << std::endl;
+        // std::cerr << \"[RosParser] DEBUG: Reported message size (members->size_of_): \" << members->size_of_ << \" for type \" << message_type << std::endl;
         // Allocate extra space as a diagnostic test for buffer overflow
-        size_t allocation_size = members->size_of_ + 2048; 
-        std::cerr << "[RosParser] DEBUG: Allocating " << allocation_size << " bytes for message object (reported size + 2048 padding)." << std::endl;
-        cpp_message_object = malloc(allocation_size);
-        // cpp_message_object = malloc(members->size_of_); // Original allocation
+        // size_t allocation_size = members->size_of_ + 2048; 
+        // std::cerr << \"[RosParser] DEBUG: Allocating \" << allocation_size << \" bytes for message object (reported size + 2048 padding).\" << std::endl;
+        // cpp_message_object = malloc(allocation_size);
+        cpp_message_object = malloc(members->size_of_); // <<< Restore original allocation
 
         if (!cpp_message_object) {
-            std::string err = "Memory allocation failed for message object (requested size: " + std::to_string(allocation_size) + ")"; // Updated error message
-            if (error_msg) *error_msg = allocate_string(err);
+            std::string err = "Memory allocation failed for message object (size: " + std::to_string(members->size_of_) + ")"; // <<< Restore original error message
+            if (error_msg) *error_msg = allocate_string(err.c_str());
             std::cerr << "[RosParser] ERROR: " << err << std::endl;
             goto cleanup_rmw_library;
         }
         // Initialize the memory using the introspection function (should only initialize the members->size_of_ part)
-        std::cerr << "[RosParser] DEBUG: Initializing allocated memory (up to reported size: " << members->size_of_ << ")..." << std::endl;
+        // std::cerr << \"[RosParser] DEBUG: Initializing allocated memory (up to reported size: \" << members->size_of_ << \")...\" << std::endl;
         members->init_function(cpp_message_object, rosidl_runtime_cpp::MessageInitialization::ZERO);
-        std::cerr << "[RosParser] DEBUG: Initialization complete." << std::endl;
+        // std::cerr << \"[RosParser] DEBUG: Initialization complete.\" << std::endl;
 
         try {
             std::cerr << "[RosParser] INFO: Deserializing " << message_type << "..." << std::endl;
@@ -784,10 +829,36 @@ int RosParser_ParseToJson(
             std::cerr << "[RosParser] INFO: Deserialization successful." << std::endl;
         } catch (const std::exception& deserialize_err) {
             std::string err = "rclcpp::SerializationBase::deserialize_message failed: " + std::string(deserialize_err.what());
-            if (error_msg) *error_msg = allocate_string(err);
+            if (error_msg) *error_msg = allocate_string(err.c_str());
             std::cerr << "[RosParser] ERROR: " << err << std::endl;
             goto cleanup_cpp_object;
         }
+
+        // >>> REMOVED: Log scalar fields carefully after deserialization <<<
+        /*
+        try {
+            std::cerr << "[RosParser] DEBUG: Post-deserialization check..." << std::endl;
+            for (uint32_t i = 0; i < members->member_count_; ++i) {
+                const auto& member = members->members_[i];
+                const uint8_t* field_data_ptr = static_cast<const uint8_t*>(cpp_message_object) + member.offset_;
+                std::string member_name(member.name_);
+                // Only log simple float types for now to minimize risk
+                if (!member.is_array_ && member.type_id_ == rosidl_typesupport_introspection_cpp::ROS_TYPE_FLOAT32) {
+                     if (field_data_ptr) {
+                         float value = *reinterpret_cast<const float*>(field_data_ptr);
+                         std::cerr << "[DEBUG] Scalar Check - " << member_name << ": " << value << std::endl;
+                     } else {
+                          std::cerr << "[DEBUG] Scalar Check - " << member_name << ": (null field_data_ptr)" << std::endl;
+                     }
+                }
+            }
+            std::cerr << "[RosParser] DEBUG: Post-deserialization check complete." << std::endl;
+        } catch (const std::exception& check_ex) {
+             std::cerr << "[RosParser] ERROR: Exception during post-deserialization check: " << check_ex.what() << std::endl;
+             // Don't necessarily exit, maybe the later code can handle it or crash more informatively
+        }
+        */
+        // >>> END REMOVED <<<
 
         std::cerr << "[RosParser] DEBUG: About to call message_to_json. introspection_ts=" << introspection_ts << ", cpp_message_object=" << cpp_message_object << std::endl; 
         conversion_success = message_to_json(introspection_ts, cpp_message_object, result_json);
@@ -795,7 +866,7 @@ int RosParser_ParseToJson(
 
         if (!conversion_success) {
             std::string err = "Failed to convert deserialized message '" + std::string(message_type) + "' to JSON.";
-            if (error_msg) *error_msg = allocate_string(err);
+            if (error_msg) *error_msg = allocate_string(err.c_str());
             std::cerr << "[RosParser] ERROR: " << err << std::endl;
             goto cleanup_cpp_object;
         }
@@ -820,7 +891,7 @@ int RosParser_ParseToJson(
             }
         } catch (const json::exception& json_ex) {
             std::string err = "Failed to dump JSON object to string: " + std::string(json_ex.what());
-            if (error_msg) *error_msg = allocate_string(err);
+            if (error_msg) *error_msg = allocate_string(err.c_str());
             std::cerr << "[RosParser] ERROR: " << err << std::endl;
             goto cleanup_cpp_object;
         }
@@ -828,7 +899,7 @@ int RosParser_ParseToJson(
         *json_output = allocate_string(json_str);
         if (!*json_output) {
             std::string err = "Memory allocation failed for JSON output";
-            if (error_msg) *error_msg = allocate_string(err);
+            if (error_msg) *error_msg = allocate_string(err.c_str());
             std::cerr << "[RosParser] ERROR: " << err << std::endl;
             goto cleanup_cpp_object;
         }
@@ -851,7 +922,7 @@ int RosParser_ParseToJson(
 
     } catch (const std::exception& e) {
         std::string err = "Unhandled exception in RosParser_ParseToJson: " + std::string(e.what());
-        if (error_msg) *error_msg = allocate_string(err);
+        if (error_msg) *error_msg = allocate_string(err.c_str());
         std::cerr << "[RosParser] FATAL: " << err << std::endl;
         if (cpp_message_object && members) { members->fini_function(cpp_message_object); free(cpp_message_object); }
         return ROS_PARSER_ERROR_UNKNOWN;
