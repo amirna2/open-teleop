@@ -252,16 +252,21 @@ class TopicPublisher:
                 mapping = next((m for m in self.topic_mappings if m.get('ott') == topic and m.get('direction', self.defaults.get('direction')) == 'INBOUND'), None)
                 
                 if mapping:
-                    # Convert JSON data to ROS message using the message_converter
+                    # Determine target frame_id
+                    default_frame_id = 'base_link' # Sensible default for velocity/stamped commands
+                    target_frame_id = mapping.get('frame_id', default_frame_id)
+
+                    # Convert JSON data to ROS message, passing the frame_id
                     ros_message = self.message_converter.convert_to_ros_message(
                         mapping['message_type'], 
-                        data
+                        data,
+                        target_frame_id # Pass the determined frame_id
                     )
                     
                     # Publish the converted message
                     if ros_message:
                         publisher.publish(ros_message)
-                        self.logger.debug(f"TopicPublisher: Message published successfully to {mapping['ros_topic']}")
+                        self.logger.debug(f"TopicPublisher: Message published successfully to {mapping['ros_topic']} using frame_id '{target_frame_id}'")
                     else:
                          self.logger.error(f"TopicPublisher: Failed to convert message data for topic {topic}")
                 else:

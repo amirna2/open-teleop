@@ -15,13 +15,14 @@ class MessageConverter:
         self.node = node # Store node reference
         self.logger = logger
             
-    def convert_to_ros_message(self, message_type_str, json_data):
+    def convert_to_ros_message(self, message_type_str, json_data, target_frame_id=None):
         """
         Convert JSON data to a ROS message.
         
         Args:
             message_type_str: The ROS message type as a string (e.g., 'geometry_msgs/msg/Twist')
             json_data: The JSON data to convert to a ROS message
+            target_frame_id: The desired frame_id for stamped messages (optional)
             
         Returns:
             A ROS message instance with fields populated from json_data
@@ -52,9 +53,10 @@ class MessageConverter:
                 if self.logger:
                      self.logger.debug(f"Populating header for TwistStamped")
                 try:
-                    frame_id = 'base_link' # TODO: Make this configurable
+                    # Use the passed-in frame_id or a default if necessary
+                    frame_id = target_frame_id if target_frame_id else 'base_link' # Fallback if not passed
                     ros_message.header.stamp = self.node.get_clock().now().to_msg()
-                    ros_message.header.frame_id = frame_id
+                    ros_message.header.frame_id = frame_id # Use determined frame_id
                 except Exception as e:
                     if self.logger:
                         self.logger.error(f"Failed to populate TwistStamped header: {e}")

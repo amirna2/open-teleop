@@ -69,6 +69,7 @@ topic_mappings:
     priority: "HIGH"
     message_type: "geometry_msgs/msg/TwistStamped"
     direction: "INBOUND"
+    frame_id: "base_link"
     source_type: "ROS2_CDR"
 
 #  - ros_topic: "/cmd_audio"
