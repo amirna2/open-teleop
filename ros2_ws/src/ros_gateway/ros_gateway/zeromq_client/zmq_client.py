@@ -224,8 +224,8 @@ class ZmqClient:
                 
                 # Log poll stats every 5 seconds
                 if current_time - last_log_time > 5:
-                    if self.logger:
-                        self.logger.debug(f"ZmqClient: Polling socket (count: {poll_count} in last 5s)")
+                    #if self.logger:
+                    #    self.logger.debug(f"ZmqClient: Polling socket (count: {poll_count} in last 5s)")
                     poll_count = 0
                     last_log_time = current_time
                 

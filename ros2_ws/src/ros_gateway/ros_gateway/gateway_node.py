@@ -214,7 +214,8 @@ class RosGateway(Node):
     
     def heartbeat_callback(self):
         """Periodic heartbeat to monitor system status"""
-        self.logger.debug('Gateway heartbeat')
+        #self.logger.debug('Gateway heartbeat')
+        x = 1
         # Could add metrics reporting here
     
     def signal_handler(self, sig, frame):

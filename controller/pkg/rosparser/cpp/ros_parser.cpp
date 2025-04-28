@@ -197,46 +197,98 @@ bool field_to_json(
     }
 
     if (member.is_array_) {
-        if (g_debug_logging_enabled) std::cerr << "    [field_to_json] Handling array..." << std::endl;
+        if (g_debug_logging_enabled) std::cerr << "    [field_to_json] Handling array field: " << member.name_ << std::endl;
         j_field = json::array();
         size_t array_size = member.array_size_;
         const uint8_t* array_data_ptr = field_data_ptr;
 
-        typedef struct GenericSequence {
-            void * data;
-            size_t size;
-            size_t capacity;
-        } GenericSequence;
-
         if (member.is_upper_bound_ || member.array_size_ == 0) {
-            if (g_debug_logging_enabled) std::cerr << "      [field_to_json] Dynamic array detected." << std::endl;
-            const GenericSequence* sequence = reinterpret_cast<const GenericSequence*>(field_data_ptr);
+            if (g_debug_logging_enabled) std::cerr << "      [field_to_json] Dynamic array detected for field: " << member.name_ << std::endl;
             
-            // Safety check 1: Ensure sequence is valid
-            if (!sequence) {
-                if (g_debug_logging_enabled) std::cerr << "      [field_to_json] ERROR: Null sequence pointer." << std::endl;
-                return false;
+            // >>> MODIFIED: Use direct std::vector access instead of GenericSequence <<<
+            const void* vector_ptr_generic = static_cast<const void*>(field_data_ptr);
+            if (!vector_ptr_generic) {
+                 if (g_debug_logging_enabled) std::cerr << "      [field_to_json] ERROR: Null field_data_ptr for dynamic vector field: " << member.name_ << std::endl;
+                 return false;
+            }
+
+            // Determine size and data pointer using type-specific vector access
+            try {
+                switch (member.type_id_) {
+                    case ROS_TYPE_OCTET:
+                    case ROS_TYPE_UINT8: {
+                        const auto* vec_ptr = static_cast<const std::vector<uint8_t>*>(vector_ptr_generic);
+                        if (!vec_ptr) { if (g_debug_logging_enabled) std::cerr << "Vector cast failed for uint8_t[] " << member.name_ << std::endl; return false; }
+                        array_size = vec_ptr->size();
+                        array_data_ptr = reinterpret_cast<const uint8_t*>(vec_ptr->data());
+                        if (g_debug_logging_enabled) std::cerr << "        [vector access] uint8[] field=\"" << member.name_ << "\" size=" << array_size << " data_ptr=" << static_cast<const void*>(array_data_ptr) << std::endl;
+                        break;
+                    }
+                    case ROS_TYPE_FLOAT32: {
+                        const auto* vec_ptr = static_cast<const std::vector<float>*>(vector_ptr_generic);
+                        if (!vec_ptr) { if (g_debug_logging_enabled) std::cerr << "Vector cast failed for float32[] " << member.name_ << std::endl; return false; }
+                        array_size = vec_ptr->size();
+                        array_data_ptr = reinterpret_cast<const uint8_t*>(vec_ptr->data());
+                        if (g_debug_logging_enabled) std::cerr << "        [vector access] float32[] field=\"" << member.name_ << "\" size=" << array_size << " data_ptr=" << static_cast<const void*>(array_data_ptr) << std::endl;
+                        break;
+                    }
+                    // Add cases for other vector types as needed (e.g., float64, int32, etc.)
+                    // ... ensure to use reinterpret_cast<const uint8_t*> for array_data_ptr ... 
+                    case ROS_TYPE_FLOAT64: {
+                        const auto* vec_ptr = static_cast<const std::vector<double>*>(vector_ptr_generic);
+                        if (!vec_ptr) { if (g_debug_logging_enabled) std::cerr << "Vector cast failed for float64[] " << member.name_ << std::endl; return false; }
+                        array_size = vec_ptr->size();
+                        array_data_ptr = reinterpret_cast<const uint8_t*>(vec_ptr->data());
+                        if (g_debug_logging_enabled) std::cerr << "        [vector access] float64[] field=\"" << member.name_ << "\" size=" << array_size << " data_ptr=" << static_cast<const void*>(array_data_ptr) << std::endl;
+                        break;
+                    }                    
+                    case ROS_TYPE_CHAR: // Note: std::vector<char>
+                    case ROS_TYPE_INT8: { // Note: std::vector<int8_t>
+                        const auto* vec_ptr = static_cast<const std::vector<int8_t>*>(vector_ptr_generic);
+                        if (!vec_ptr) { if (g_debug_logging_enabled) std::cerr << "Vector cast failed for int8[] " << member.name_ << std::endl; return false; }
+                        array_size = vec_ptr->size();
+                        array_data_ptr = reinterpret_cast<const uint8_t*>(vec_ptr->data());
+                        if (g_debug_logging_enabled) std::cerr << "        [vector access] int8[] field=\"" << member.name_ << "\" size=" << array_size << " data_ptr=" << static_cast<const void*>(array_data_ptr) << std::endl;
+                        break;
+                    }
+                    // ... other integer types ...
+                    case ROS_TYPE_BOOL: { // Note: std::vector<bool> is specialized, be careful
+                        // std::vector<bool> might not store elements contiguously.
+                        // Accessing .data() is complex/non-standard. Falling back to element-by-element access might be safer if needed.
+                         if (g_debug_logging_enabled) std::cerr << "        [vector access] WARNING: std::vector<bool> direct data access skipped for field " << member.name_ << ". Iteration needed." << std::endl;
+                        // Handle bool vector element by element later in the loop
+                         array_size = 0; // Set to 0 to prevent bulk processing
+                         array_data_ptr = nullptr;
+                        break; 
+                    }
+                    default:{
+                        if (g_debug_logging_enabled) std::cerr << "      [field_to_json] ERROR: Direct vector access not implemented for dynamic array type_id: " << (int)member.type_id_ << " for field " << member.name_ << std::endl;
+                        return false; // Type not handled for direct vector access
+                    }
+                }
+            } catch (const std::exception& e) {
+                 if (g_debug_logging_enabled) std::cerr << "      [field_to_json] EXCEPTION during direct vector access for field " << member.name_ << ": " << e.what() << std::endl;
+                 return false;
             }
             
-            // Safety check 2: Ensure data pointer is valid
-            if (!sequence->data) {
-                if (g_debug_logging_enabled) std::cerr << "      [field_to_json] ERROR: Null data pointer in sequence." << std::endl;
+            // Safety check: Ensure data pointer is valid *after* vector access, unless size is 0
+            if (!array_data_ptr && array_size > 0) {
+                if (g_debug_logging_enabled) std::cerr << "      [field_to_json] ERROR: Null data pointer from vector access, but size is non-zero (" << array_size << "). Field: " << member.name_ << std::endl;
                 return false;
             }
+            // >>> END MODIFIED SECTION <<<
             
-            // Safety check 3: Ensure size is reasonable
-            constexpr size_t MAX_SAFE_ARRAY_SIZE = 1000000; // 1 million elements should be plenty for any reasonable message
-            if (sequence->size > MAX_SAFE_ARRAY_SIZE) {
-                if (g_debug_logging_enabled) std::cerr << "      [field_to_json] ERROR: Array size too large: " << sequence->size 
+            // Safety check 3: Ensure size is reasonable (apply to size obtained from vector)
+            constexpr size_t MAX_SAFE_ARRAY_SIZE = 1000000; 
+            if (array_size > MAX_SAFE_ARRAY_SIZE) {
+                if (g_debug_logging_enabled) std::cerr << "      [field_to_json] ERROR: Array size too large: " << array_size 
                                                       << " (max: " << MAX_SAFE_ARRAY_SIZE << ")" << std::endl;
                 // Set a reasonable upper bound for processing
                 array_size = MAX_SAFE_ARRAY_SIZE;
                 if (g_debug_logging_enabled) std::cerr << "      [field_to_json] WARNING: Limiting to " << MAX_SAFE_ARRAY_SIZE << " elements" << std::endl;
-            } else {
-                array_size = sequence->size;
             }
             
-            array_data_ptr = static_cast<const uint8_t*>(sequence->data);
+            array_data_ptr = static_cast<const uint8_t*>(array_data_ptr);
             if (g_debug_logging_enabled) std::cerr << "          [field_to_json] Dynamic Size: " << array_size << std::endl;
 
             // Check array_data_ptr again after getting from sequence
@@ -651,6 +703,7 @@ int RosParser_ParseToJson(
     void* cpp_message_object = nullptr;
     json result_json;
     std::string json_str;
+    bool conversion_success = false;
 
     try {
         MessageTypeSupport introspection_support_wrapper;
@@ -705,14 +758,24 @@ int RosParser_ParseToJson(
         serialized_msg_view.get_rcl_serialized_message().buffer_length = message_size;
         serialized_msg_view.get_rcl_serialized_message().buffer_capacity = message_size;
 
-        cpp_message_object = malloc(members->size_of_);
+        // Log the reported size before allocating
+        std::cerr << "[RosParser] DEBUG: Reported message size (members->size_of_): " << members->size_of_ << " for type " << message_type << std::endl;
+        // Allocate extra space as a diagnostic test for buffer overflow
+        size_t allocation_size = members->size_of_ + 2048; 
+        std::cerr << "[RosParser] DEBUG: Allocating " << allocation_size << " bytes for message object (reported size + 2048 padding)." << std::endl;
+        cpp_message_object = malloc(allocation_size);
+        // cpp_message_object = malloc(members->size_of_); // Original allocation
+
         if (!cpp_message_object) {
-            std::string err = "Memory allocation failed for message object (size: " + std::to_string(members->size_of_) + ")";
+            std::string err = "Memory allocation failed for message object (requested size: " + std::to_string(allocation_size) + ")"; // Updated error message
             if (error_msg) *error_msg = allocate_string(err);
             std::cerr << "[RosParser] ERROR: " << err << std::endl;
             goto cleanup_rmw_library;
         }
+        // Initialize the memory using the introspection function (should only initialize the members->size_of_ part)
+        std::cerr << "[RosParser] DEBUG: Initializing allocated memory (up to reported size: " << members->size_of_ << ")..." << std::endl;
         members->init_function(cpp_message_object, rosidl_runtime_cpp::MessageInitialization::ZERO);
+        std::cerr << "[RosParser] DEBUG: Initialization complete." << std::endl;
 
         try {
             std::cerr << "[RosParser] INFO: Deserializing " << message_type << "..." << std::endl;
@@ -726,7 +789,11 @@ int RosParser_ParseToJson(
             goto cleanup_cpp_object;
         }
 
-        if (!message_to_json(introspection_ts, cpp_message_object, result_json)) {
+        std::cerr << "[RosParser] DEBUG: About to call message_to_json. introspection_ts=" << introspection_ts << ", cpp_message_object=" << cpp_message_object << std::endl; 
+        conversion_success = message_to_json(introspection_ts, cpp_message_object, result_json);
+        std::cerr << "[RosParser] DEBUG: Returned from message_to_json. Success=" << conversion_success << std::endl; 
+
+        if (!conversion_success) {
             std::string err = "Failed to convert deserialized message '" + std::string(message_type) + "' to JSON.";
             if (error_msg) *error_msg = allocate_string(err);
             std::cerr << "[RosParser] ERROR: " << err << std::endl;
@@ -742,7 +809,7 @@ int RosParser_ParseToJson(
             } else {
                 json_str = result_json.dump();
             }
-            std::cerr << "[RosParser] INFO: JSON conversion successful (string size: " << json_str.length() << ")." << std::endl;
+            std::cerr << "[RosParser] INFO: JSON conversion successful (string size: " << json_str.length() << ").";
             
             // Log a truncated version for large JSONs
             if (json_str.length() > 1000) {
@@ -766,6 +833,7 @@ int RosParser_ParseToJson(
             goto cleanup_cpp_object;
         }
 
+        std::cerr << "[RosParser] DEBUG: Finished processing message. Cleaning up..." << std::endl;
         members->fini_function(cpp_message_object);
         free(cpp_message_object);
         cpp_message_object = nullptr;
