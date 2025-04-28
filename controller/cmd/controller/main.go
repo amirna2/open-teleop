@@ -35,12 +35,23 @@ import (
 	"github.com/open-teleop/controller/services"
 )
 
+// --- Global Variables for Flags (Best Practice) ---
+var (
+	configDir    *string
+	teleopConfig *string
+)
+
 // --- Main Application Entry Point ---
 
 func main() {
-	// --- Initial Setup & Bootstrap Config ---
-	configDir := parseFlagsAndResolveConfigDir()
-	bootstrapCfg, err := config.LoadBootstrapConfig(configDir)
+	// --- Parse Flags First ---
+	parseFlags()
+
+	// --- Resolve Config Directory ---
+	absoluteConfigDir := resolveConfigDir(*configDir)
+
+	// --- Load Bootstrap Config ---
+	bootstrapCfg, err := config.LoadBootstrapConfig(absoluteConfigDir)
 	if err != nil {
 		stdlog.Fatalf("Failed to load bootstrap configuration: %v", err)
 	}
@@ -53,7 +64,8 @@ func main() {
 	logger.Infof("Logger initialized.")
 
 	// --- Load Initial Operational Config ---
-	initialCfg, operationalConfigPath, err := loadInitialConfig(configDir, bootstrapCfg, logger)
+	// Pass the potential override from the flag
+	initialCfg, operationalConfigPath, err := loadInitialConfig(absoluteConfigDir, *teleopConfig, bootstrapCfg, logger)
 	if err != nil {
 		logger.Fatalf("Failed to load initial operational configuration: %v", err)
 	}
@@ -109,18 +121,23 @@ func main() {
 
 // --- Helper Functions for Initialization ---
 
-// parseFlagsAndResolveConfigDir handles command line flags and determines the absolute config path.
-func parseFlagsAndResolveConfigDir() string {
-	configDir := flag.String("config-dir", "./config", "Path to configuration directory containing controller_config.yaml")
+// parseFlags defines and parses command line flags.
+func parseFlags() {
+	configDir = flag.String("config-dir", "./config", "Path to configuration directory containing controller_config.yaml")
+	teleopConfig = flag.String("teleop-config", "", "Path to the teleop configuration file (overrides bootstrap config)")
 	flag.Parse()
+}
 
+// resolveConfigDir determines the absolute config path for the bootstrap file.
+func resolveConfigDir(configDirFlagValue string) string {
+	// This function remains largely the same, but now takes the flag value as input
 	execPath, err := os.Executable()
 	if err != nil {
 		stdlog.Fatalf("Error determining executable path: %v", err)
 	}
 	execDir := filepath.Dir(execPath)
 
-	absoluteConfigDir := *configDir
+	absoluteConfigDir := configDirFlagValue
 	if !filepath.IsAbs(absoluteConfigDir) {
 		if absoluteConfigDir == "./config" {
 			// Special case for default, try relative to executable first
@@ -180,8 +197,27 @@ func initLogger(bootstrapCfg *config.BootstrapConfig) (customlog.Logger, error) 
 }
 
 // loadInitialConfig loads the initial operational configuration file.
-func loadInitialConfig(configDir string, bootstrapCfg *config.BootstrapConfig, logger customlog.Logger) (*config.Config, string, error) {
-	operationalConfigPath := filepath.Join(configDir, bootstrapCfg.Data.TeleopConfigFilename)
+// It now accepts the teleopConfigFlag value to check for an override.
+func loadInitialConfig(resolvedConfigDir string, teleopConfigFlag string, bootstrapCfg *config.BootstrapConfig, logger customlog.Logger) (*config.Config, string, error) {
+	var operationalConfigPath string
+
+	if teleopConfigFlag != "" {
+		logger.Infof("Using teleop configuration override from command line: %s", teleopConfigFlag)
+		if !filepath.IsAbs(teleopConfigFlag) {
+			var err error
+			operationalConfigPath, err = filepath.Abs(teleopConfigFlag) // Resolve relative paths based on CWD
+			if err != nil {
+				return nil, teleopConfigFlag, fmt.Errorf("failed to resolve absolute path for -teleop-config '%s': %w", teleopConfigFlag, err)
+			}
+			logger.Infof("Resolved relative teleop config path to: %s", operationalConfigPath)
+		} else {
+			operationalConfigPath = teleopConfigFlag
+		}
+	} else {
+		operationalConfigPath = filepath.Join(resolvedConfigDir, bootstrapCfg.Data.TeleopConfigFilename)
+		logger.Infof("Using teleop configuration path from bootstrap config: %s", operationalConfigPath)
+	}
+
 	logger.Infof("Loading initial operational configuration from: %s", operationalConfigPath)
 	initialCfg, err := config.LoadConfig(operationalConfigPath)
 	if err != nil {

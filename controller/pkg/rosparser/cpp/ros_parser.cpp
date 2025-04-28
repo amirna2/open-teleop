@@ -18,6 +18,8 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <cstdlib>
+#include <cmath> // For std::isnan and std::signbit
+#include <cfloat> // For FLT_MAX
 #include <rclcpp/serialization.hpp>
 #include <rclcpp/serialized_message.hpp>
 #include <rosidl_runtime_cpp/message_initialization.hpp>
@@ -184,6 +186,16 @@ bool field_to_json(
                   << ", IsArray: " << member.is_array_ << std::endl;
     }
 
+    // Check for null pointer before any processing
+    if (!field_data_ptr) {
+        if (g_debug_logging_enabled) {
+            std::cerr << "  [field_to_json] WARNING: Null field data pointer for type ID: " 
+                      << static_cast<int>(member.type_id_) << std::endl;
+        }
+        j_field = nullptr;
+        return false;
+    }
+
     if (member.is_array_) {
         if (g_debug_logging_enabled) std::cerr << "    [field_to_json] Handling array..." << std::endl;
         j_field = json::array();
@@ -199,22 +211,101 @@ bool field_to_json(
         if (member.is_upper_bound_ || member.array_size_ == 0) {
             if (g_debug_logging_enabled) std::cerr << "      [field_to_json] Dynamic array detected." << std::endl;
             const GenericSequence* sequence = reinterpret_cast<const GenericSequence*>(field_data_ptr);
-            array_size = sequence->size;
+            
+            // Safety check 1: Ensure sequence is valid
+            if (!sequence) {
+                if (g_debug_logging_enabled) std::cerr << "      [field_to_json] ERROR: Null sequence pointer." << std::endl;
+                return false;
+            }
+            
+            // Safety check 2: Ensure data pointer is valid
+            if (!sequence->data) {
+                if (g_debug_logging_enabled) std::cerr << "      [field_to_json] ERROR: Null data pointer in sequence." << std::endl;
+                return false;
+            }
+            
+            // Safety check 3: Ensure size is reasonable
+            constexpr size_t MAX_SAFE_ARRAY_SIZE = 1000000; // 1 million elements should be plenty for any reasonable message
+            if (sequence->size > MAX_SAFE_ARRAY_SIZE) {
+                if (g_debug_logging_enabled) std::cerr << "      [field_to_json] ERROR: Array size too large: " << sequence->size 
+                                                      << " (max: " << MAX_SAFE_ARRAY_SIZE << ")" << std::endl;
+                // Set a reasonable upper bound for processing
+                array_size = MAX_SAFE_ARRAY_SIZE;
+                if (g_debug_logging_enabled) std::cerr << "      [field_to_json] WARNING: Limiting to " << MAX_SAFE_ARRAY_SIZE << " elements" << std::endl;
+            } else {
+                array_size = sequence->size;
+            }
+            
             array_data_ptr = static_cast<const uint8_t*>(sequence->data);
             if (g_debug_logging_enabled) std::cerr << "          [field_to_json] Dynamic Size: " << array_size << std::endl;
+
+            // Check array_data_ptr again after getting from sequence
+            if (!array_data_ptr) {
+                if (g_debug_logging_enabled) std::cerr << "      [field_to_json] ERROR: Array data pointer is null after casting." << std::endl;
+                return false;
+            }
 
             switch (member.type_id_) {
                 case ROS_TYPE_OCTET:
                 case ROS_TYPE_UINT8: {
                     if (g_debug_logging_enabled) std::cerr << "        [field_to_json] Dynamic uint8 array." << std::endl;
                     const uint8_t* data_typed = reinterpret_cast<const uint8_t*>(array_data_ptr);
-                    for (size_t i = 0; i < array_size; ++i) j_field.push_back(data_typed[i]);
+                    try {
+                        for (size_t i = 0; i < array_size; ++i) j_field.push_back(data_typed[i]);
+                    } catch (const std::exception& e) {
+                        if (g_debug_logging_enabled) std::cerr << "        [field_to_json] ERROR in uint8 array processing: " 
+                                                              << e.what() << std::endl;
+                        return false;
+                    }
                     return true;
                 }
                 case ROS_TYPE_FLOAT32: {
                     if (g_debug_logging_enabled) std::cerr << "        [field_to_json] Dynamic float32 array." << std::endl;
                     const float* data_typed = reinterpret_cast<const float*>(array_data_ptr);
-                    for (size_t i = 0; i < array_size; ++i) j_field.push_back(data_typed[i]);
+                    // Additional safety check for float arrays (LaserScan ranges)
+                    try {
+                        // Validate float data by processing in chunks with additional sanity checks
+                        constexpr size_t CHUNK_SIZE = 1000; // Process in smaller chunks
+                        size_t remaining = array_size;
+                        size_t offset = 0;
+                        
+                        // Note: JSON library doesn't support reserve() like std::vector
+                        if (g_debug_logging_enabled && array_size > 10000) {
+                            std::cerr << "        [field_to_json] Processing large array of size: " << array_size << std::endl;
+                        }
+                        
+                        while (remaining > 0) {
+                            size_t current_chunk = (remaining > CHUNK_SIZE) ? CHUNK_SIZE : remaining;
+                            if (g_debug_logging_enabled && array_size > CHUNK_SIZE) 
+                                std::cerr << "          [field_to_json] Processing chunk " << offset << " to " 
+                                          << (offset + current_chunk) << " of " << array_size << std::endl;
+                            
+                            for (size_t i = 0; i < current_chunk; ++i) {
+                                // Check for NaN and Inf before adding to JSON
+                                float value = data_typed[offset + i];
+                                if (std::isnan(value)) {
+                                    value = 0.0f; // Replace NaN with 0
+                                    if (g_debug_logging_enabled) std::cerr << "          [field_to_json] WARNING: NaN found at index " 
+                                                                          << (offset + i) << ", replacing with 0" << std::endl;
+                                } else if (std::isinf(value)) {
+                                    value = std::signbit(value) ? -FLT_MAX : FLT_MAX; // Replace Inf with max float
+                                    if (g_debug_logging_enabled) std::cerr << "          [field_to_json] WARNING: Inf found at index " 
+                                                                          << (offset + i) << ", replacing with max value" << std::endl;
+                                }
+                                
+                                // Add to JSON array
+                                j_field.push_back(value);
+                            }
+                            
+                            // Move to next chunk
+                            offset += current_chunk;
+                            remaining -= current_chunk;
+                        }
+                    } catch (const std::exception& e) {
+                        if (g_debug_logging_enabled) std::cerr << "        [field_to_json] ERROR in float32 array processing: " 
+                                                              << e.what() << std::endl;
+                        return false;
+                    }
                     return true;
                 }
                 case ROS_TYPE_FLOAT64: {
@@ -434,28 +525,34 @@ bool message_to_json_internal(
 
     j_msg = json::object();
 
-    for (uint32_t i = 0; i < members->member_count_; ++i) {
-        const auto& member = members->members_[i];
-        const uint8_t* field_data_ptr =
-            static_cast<const uint8_t*>(message_data) + member.offset_;
+    try {
+        for (uint32_t i = 0; i < members->member_count_; ++i) {
+            const auto& member = members->members_[i];
+            const uint8_t* field_data_ptr =
+                static_cast<const uint8_t*>(message_data) + member.offset_;
 
-        if (g_debug_logging_enabled) {
-             std::cerr << "  [internal] Processing Member: " << member.name_
-                       << ", Offset: " << member.offset_
-                       << ", TypeID: " << static_cast<int>(member.type_id_)
-                       << ", IsArray: " << member.is_array_
-                       << std::endl;
-        }
+            if (g_debug_logging_enabled) {
+                 std::cerr << "  [internal] Processing Member: " << member.name_
+                           << ", Offset: " << member.offset_
+                           << ", TypeID: " << static_cast<int>(member.type_id_)
+                           << ", IsArray: " << member.is_array_
+                           << std::endl;
+            }
 
-        json field_value;
-        if (field_to_json(member, field_data_ptr, field_value)) {
-             if (g_debug_logging_enabled) std::cerr << "    [internal] Field '" << member.name_ << "' converted successfully." << std::endl;
-            j_msg[member.name_] = field_value;
-        } else {
-             if (g_debug_logging_enabled) std::cerr << "  [internal] WARNING: Failed to convert field '" << member.name_ << "' to JSON. Setting to null." << std::endl;
-            j_msg[member.name_] = nullptr;
+            json field_value;
+            if (field_to_json(member, field_data_ptr, field_value)) {
+                 if (g_debug_logging_enabled) std::cerr << "    [internal] Field '" << member.name_ << "' converted successfully." << std::endl;
+                j_msg[member.name_] = field_value;
+            } else {
+                 if (g_debug_logging_enabled) std::cerr << "  [internal] WARNING: Failed to convert field '" << member.name_ << "' to JSON. Setting to null." << std::endl;
+                j_msg[member.name_] = nullptr;
+            }
         }
+    } catch (const std::exception& e) {
+        if (g_debug_logging_enabled) std::cerr << "[message_to_json_internal] EXCEPTION during message conversion: " << e.what() << std::endl;
+        return false;
     }
+    
     if (g_debug_logging_enabled) std::cerr << "[message_to_json_internal] Conversion complete. Data Ptr: " << message_data << std::endl;
     return true;
 }
@@ -637,7 +734,14 @@ int RosParser_ParseToJson(
         }
 
         try {
-            json_str = result_json.dump();
+            // Special handling for LaserScan messages which can be large
+            if (std::string(message_type) == "sensor_msgs/msg/LaserScan") {
+                std::cerr << "[RosParser] INFO: Processing LaserScan message, ensuring compact JSON format" << std::endl;
+                // Use a compact representation to minimize memory usage
+                json_str = result_json.dump(-1);  // Minimal output without whitespace
+            } else {
+                json_str = result_json.dump();
+            }
             std::cerr << "[RosParser] INFO: JSON conversion successful (string size: " << json_str.length() << ")." << std::endl;
             
             // Log a truncated version for large JSONs
