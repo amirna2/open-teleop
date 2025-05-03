@@ -4,20 +4,22 @@ import rclpy
 from rclpy.node import Node
 import os
 # import time # No longer needed
+import uuid # For generating stream IDs
+import functools # For passing args to subscriber callback
 
 # Import custom logger
 import open_teleop_logger as log
 
 # Import message types
 from std_msgs.msg import String # Placeholder
-# from sensor_msgs.msg import Image, CompressedImage
+from sensor_msgs.msg import Image # Assuming Image for now, might need CompressedImage later
 from open_teleop_msgs.msg import EncodedFrame, StreamStatus
 from open_teleop_msgs.srv import ManageStream, GetStatus
 
 # Import GStreamer and GLib
-# import gi
-# gi.require_version('Gst', '1.0')
-# from gi.repository import Gst, GLib
+import gi
+gi.require_version('Gst', '1.0')
+from gi.repository import Gst, GLib
 
 class OpenTeleopAvNode(Node):
     """ROS2 Node for handling A/V encoding and service calls."""
@@ -25,6 +27,21 @@ class OpenTeleopAvNode(Node):
     def __init__(self):
         """Node initialization."""
         super().__init__('open_teleop_av_node')
+
+        # Check environment *before* initializing Gst
+        gst_debug_env = os.environ.get('GST_DEBUG')
+        # Use standard print here initially, as logger might not be fully configured
+        # and output might be redirected differently than logger
+        print(f"[AV_NODE PRE-GST_INIT] GST_DEBUG environment variable: {gst_debug_env}")
+
+        # Initialize GStreamer
+        try:
+            Gst.init(None)
+        except Exception as e:
+             # Use standard logger temporarily if custom one fails
+             self.get_logger().error(f"Failed to initialize GStreamer: {e}")
+             # Decide how to handle this - potentially raise an exception or shutdown
+             raise RuntimeError("GStreamer initialization failed") from e
 
         # --- Logger Setup ---
         # Declare parameters for logger configuration
@@ -35,10 +52,14 @@ class OpenTeleopAvNode(Node):
 
         self._configure_logging() # Configure logger based on parameters
 
+        # Log it again using the configured logger for confirmation
+        self.logger.debug(f"GST_DEBUG env var check via logger: {os.environ.get('GST_DEBUG')}")
+
         self.logger.info(f'{self.get_name()} starting up...')
 
-        # TODO: Initialize GStreamer
-        # Gst.init(None)
+        # Dictionary to hold active pipeline information (keyed by stream_id)
+        # Value could be a dict or class instance containing Gst.Pipeline, relevant elements, state etc.
+        self.pipelines = {}
 
         # TODO: Setup Publishers (for EncodedFrame)
         # self.encoded_frame_publisher = self.create_publisher(EncodedFrame, '~/encoded_frames', 10)
@@ -48,15 +69,16 @@ class OpenTeleopAvNode(Node):
         self.get_status_service = self.create_service(GetStatus, '~/get_status', self.handle_get_status)
 
         # TODO: Setup Subscribers (to input sensor_msgs/Image topics - likely managed dynamically)
+        # Moved subscriber creation into handle_manage_stream
 
-        # TODO: Placeholder timer for testing
-        self.timer = self.create_timer(1.0, self.timer_callback)
+        # TODO: Placeholder timer for testing - remove if no longer needed
+        self.timer = self.create_timer(5.0, self.timer_callback) # Increase interval
 
         self.logger.info(f'{self.get_name()} initialized.')
 
     def timer_callback(self):
-        # Placeholder action
-        # self.logger.info('Timer tick')
+        # Placeholder action - maybe log pipeline count?
+        self.logger.debug(f"Timer tick: {len(self.pipelines)} active pipelines.")
         pass
 
     # --- Service Callbacks ---
@@ -74,15 +96,163 @@ class OpenTeleopAvNode(Node):
         self.logger.debug(f"Full request object representation: {request}")
 
         # TODO: Implement GStreamer logic based on request.action
+        if request.action == ManageStream.Request.ACTION_ADD:
+            # --- 1. Validate inputs --- 
+            if not all([request.input_ros_topic, request.output_ott_topic, request.encoding_format]):
+                response.success = False
+                response.message = "ACTION_ADD requires input_ros_topic, output_ott_topic, and encoding_format."
+                self.logger.error(response.message)
+                return response
 
-        # Minimal placeholder response (can be expanded later)
-        response.success = True
-        response.message = "Request received (placeholder logic)"
-        response.assigned_stream_id = request.stream_id # Echo back provided ID
-        if request.action == ManageStream.Request.ACTION_ADD and not request.stream_id:
-            import uuid
-            response.assigned_stream_id = str(uuid.uuid4())
-            response.message += f", Assigned ID: {response.assigned_stream_id}"
+            # --- 2. Generate/Assign Stream ID --- 
+            stream_id = request.stream_id
+            if not stream_id:
+                stream_id = str(uuid.uuid4()) # Generate unique ID
+                self.logger.info(f"No stream_id provided, generated: {stream_id}")
+            
+            response.assigned_stream_id = stream_id # Always return the ID being used
+
+            # --- 3. Check for Collision --- 
+            if stream_id in self.pipelines:
+                response.success = False
+                response.message = f"Stream ID '{stream_id}' already exists."
+                self.logger.error(response.message)
+                return response
+
+            self.logger.info(f"Attempting to add pipeline for stream ID: {stream_id}")
+
+            # --- 4. Create GStreamer Pipeline and Elements --- 
+            pipeline = None
+            ros_subscriber = None # Keep track for cleanup on failure
+            try:
+                pipeline = Gst.Pipeline.new(f"pipeline_{stream_id}")
+                
+                # Create elements
+                # TODO: Configure appsrc caps based on expected input format from ROS msg
+                appsrc = Gst.ElementFactory.make("appsrc", f"appsrc_{stream_id}")
+                videoconvert = Gst.ElementFactory.make("videoconvert", f"vconv_{stream_id}")
+                
+                # TODO: Select encoder based on request.encoding_format
+                # For now, hardcode x264enc assuming request.encoding_format is video/h264
+                encoder = Gst.ElementFactory.make("x264enc", f"enc_{stream_id}")
+                if encoder:
+                    # Example: Set some default encoder properties if needed
+                    encoder.set_property("tune", "zerolatency")
+                    # TODO: Parse and apply params from request.encoder_params
+                    
+                appsink = Gst.ElementFactory.make("appsink", f"appsink_{stream_id}")
+                if appsink:
+                     # Don't drop buffers, make sync=False for potentially lower latency
+                    appsink.set_property("max-buffers", 5) 
+                    appsink.set_property("drop", False)
+                    appsink.set_property("sync", False)
+                    appsink.set_property("emit-signals", True) # Critical for getting samples
+                    # Connect signal handler AFTER storing pipeline state, or handle potential errors
+                    # appsink.connect("new-sample", self.on_new_sample, stream_id)
+
+                if not all([pipeline, appsrc, videoconvert, encoder, appsink]):
+                     raise RuntimeError(f"Failed to create one or more GStreamer elements for {stream_id}")
+                
+                self.logger.debug(f"Elements created for {stream_id}")
+
+                # --- 5. Add Elements to Pipeline --- 
+                pipeline.add(appsrc)
+                pipeline.add(videoconvert)
+                pipeline.add(encoder)
+                pipeline.add(appsink)
+
+                # --- 6. Link Elements --- 
+                if not appsrc.link(videoconvert):
+                    raise RuntimeError(f"Failed to link appsrc to videoconvert for {stream_id}")
+                if not videoconvert.link(encoder):
+                     raise RuntimeError(f"Failed to link videoconvert to encoder for {stream_id}")
+                if not encoder.link(appsink):
+                     raise RuntimeError(f"Failed to link encoder to appsink for {stream_id}")
+                     
+                self.logger.info(f"GStreamer elements linked successfully for {stream_id}")
+
+                # --- 7. Store Pipeline State --- 
+                # Store BEFORE creating subscriber/setting state, in case those fail
+                pipeline_state = {
+                    'pipeline': pipeline,
+                    'appsrc': appsrc,
+                    'appsink': appsink,
+                    'encoder': encoder, # Store encoder for potential param updates
+                    'input_topic': request.input_ros_topic,
+                    'output_topic': request.output_ott_topic,
+                    'ros_subscriber': None, # Will be added next
+                    'status': 'CREATED' # Initial status
+                }
+                self.pipelines[stream_id] = pipeline_state
+                self.logger.info(f"Pipeline {stream_id} state dictionary created.")
+
+                # --- 8. Connect AppSink Signal --- 
+                appsink.connect("new-sample", self.on_new_sample, stream_id)
+                self.logger.info(f"Connected appsink new-sample signal for {stream_id}")
+
+                # --- 9. Create ROS Subscriber --- 
+                # TODO: Determine message type based on input topic or configuration?
+                # Assuming sensor_msgs/Image for now.
+                # Use functools.partial to pass stream_id to the callback
+                callback_with_id = functools.partial(self.ros_image_callback, stream_id=stream_id)
+                ros_subscriber = self.create_subscription(
+                    Image, # Message type
+                    request.input_ros_topic, # Topic name
+                    callback_with_id, # Callback function
+                    10 # QoS profile depth
+                )
+                pipeline_state['ros_subscriber'] = ros_subscriber # Store subscriber handle
+                self.logger.info(f"Created ROS subscriber for {request.input_ros_topic} linked to {stream_id}")
+                
+                # --- 10. Set Initial Pipeline State --- 
+                ret = pipeline.set_state(Gst.State.PAUSED)
+                if ret == Gst.StateChangeReturn.FAILURE:
+                    raise RuntimeError(f"Failed to set pipeline {stream_id} to PAUSED state.")
+                else:
+                    self.logger.info(f"Pipeline {stream_id} state set to PAUSED.")
+                    pipeline_state['status'] = 'PAUSED'
+
+                response.success = True
+                response.message = f"Pipeline for stream '{stream_id}' created and paused successfully."
+
+            except Exception as e:
+                self.logger.error(f"Failed during pipeline creation/setup for stream '{stream_id}': {e}")
+                # Clean up ROS subscriber if created
+                if ros_subscriber:
+                    try:
+                        self.destroy_subscription(ros_subscriber)
+                    except Exception as destroy_e:
+                        self.logger.error(f"Error destroying subscriber during cleanup: {destroy_e}")
+                # Clean up partial pipeline if created
+                if pipeline:
+                    pipeline.set_state(Gst.State.NULL)
+                response.success = False
+                response.message = f"Failed to create/setup pipeline: {e}"
+                # Remove entry if it was added
+                if stream_id in self.pipelines:
+                    del self.pipelines[stream_id]
+        
+        # TODO: Implement other actions (REMOVE, UPDATE, ENABLE, DISABLE)
+        elif request.action == ManageStream.Request.ACTION_REMOVE:
+            response.success = False
+            response.message = "ACTION_REMOVE not implemented yet."
+            # ... implementation ...
+        elif request.action == ManageStream.Request.ACTION_UPDATE:
+            response.success = False
+            response.message = "ACTION_UPDATE not implemented yet."
+             # ... implementation ...
+        elif request.action == ManageStream.Request.ACTION_ENABLE:
+             response.success = False
+             response.message = "ACTION_ENABLE not implemented yet."
+             # ... implementation ...
+        elif request.action == ManageStream.Request.ACTION_DISABLE:
+             response.success = False
+             response.message = "ACTION_DISABLE not implemented yet."
+             # ... implementation ...
+        else:
+            response.success = False
+            response.message = f"Unknown action code: {request.action}"
+            self.logger.error(response.message)
             
         self.logger.info("--- Exiting handle_manage_stream ---")
         return response
@@ -93,43 +263,81 @@ class OpenTeleopAvNode(Node):
         
         # Placeholder status
         response.node_status = "OK (placeholder)"
-        
-        # Example placeholder stream status
-        example_status = StreamStatus(
-            stream_id="placeholder_stream_1",
-            input_ros_topic="/dev/null",
-            output_ott_topic="teleop.video.placeholder",
-            encoding_format="video/h264",
-            is_enabled=False,
-            status_message="Placeholder status",
-            frame_rate_actual=0.0,
-            bitrate_actual=0
-        )
-        response.active_streams = [example_status]
+        response.active_streams = []
+        # Populate from self.pipelines dictionary
+        for stream_id, state in self.pipelines.items():
+            status_msg = StreamStatus(
+                stream_id=stream_id,
+                input_ros_topic=state.get('input_topic', '?'),
+                output_ott_topic=state.get('output_topic', '?'),
+                # TODO: Get actual encoding format used
+                encoding_format="video/h264_placeholder", 
+                is_enabled=(state.get('status') == 'PLAYING'), # Simplified status check
+                status_message=state.get('status', 'UNKNOWN'),
+                # TODO: Get actual runtime metrics if needed
+                frame_rate_actual=0.0, 
+                bitrate_actual=0
+            )
+            response.active_streams.append(status_msg)
         
         return response
 
     # --- GStreamer Pipeline Management (Example placeholders) ---
-    # def add_pipeline(...):
-    #     # Create Gst elements programmatically
-    #     # Link elements
-    #     # Add to internal state management
+    # def add_pipeline(...): # Now handled within manage_stream
     #     pass
 
-    # def remove_pipeline(...):
-    #     # Set pipeline state to NULL
-    #     # Remove from internal state
+    # def remove_pipeline(...): # Will be handled within manage_stream
     #     pass
+    
+    # --- Appsink Callback ---
+    def on_new_sample(self, appsink: Gst.Element, stream_id: str):
+        """Callback executed when appsink receives a new sample."""
+        sample = appsink.pull_sample()
+        if sample:
+            buffer = sample.get_buffer()
+            if buffer:
+                # TODO: Extract buffer data, timestamp, etc.
+                # TODO: Create EncodedFrame message
+                # TODO: Publish message
+                map_info = buffer.map(Gst.MapFlags.READ)
+                self.logger.debug(f"Appsink ({stream_id}): Received sample, size={map_info.size}")
+                buffer.unmap(map_info)
+            else:
+                 self.logger.warning(f"Appsink ({stream_id}): Failed to get buffer from sample")
+            # Note: GStreamer sample/buffer objects are often reused. 
+            # Don't keep references to them beyond this callback if possible.
+            # For publishing, copy the relevant data.
+            return Gst.FlowReturn.OK
+        else:
+            self.logger.warning(f"Appsink ({stream_id}): Failed to pull sample")
+            return Gst.FlowReturn.ERROR
 
-    # --- ROS Topic Callbacks (Example placeholder) ---
-    # def image_callback(self, msg, stream_id):
-    #     # Called when a new image arrives for a specific stream
-    #     # TODO: Push buffer into the corresponding GStreamer appsrc
-    #     pass
+    # --- ROS Topic Callbacks ---
+    def ros_image_callback(self, msg: Image, stream_id: str):
+        """Callback executed when a ROS Image message arrives for a stream."""
+        self.logger.debug(f"ROS Image received for stream {stream_id}, seq={msg.header.stamp.sec}.{msg.header.stamp.nanosec}")
+        # TODO: Validate stream_id exists in self.pipelines and is active
+        # TODO: Get appsrc element from self.pipelines[stream_id]
+        # TODO: Convert ROS Image data to Gst.Buffer
+        # TODO: Set Gst.Buffer caps correctly (format, width, height)
+        # TODO: Set timestamp on Gst.Buffer (from msg.header.stamp)
+        # TODO: Push buffer into appsrc using appsrc.push_buffer(gst_buffer)
+        pass
 
     def destroy_node(self):
         self.logger.info(f'{self.get_name()} shutting down...')
-        # TODO: Clean up GStreamer resources (pipelines, etc.)
+        # Clean up GStreamer resources (pipelines, etc.)
+        for stream_id, state in self.pipelines.items():
+            self.logger.info(f"Stopping pipeline for stream {stream_id}...")
+            if state.get('pipeline'):
+                state['pipeline'].set_state(Gst.State.NULL)
+            if state.get('ros_subscriber'):
+                try:
+                    self.destroy_subscription(state['ros_subscriber'])
+                except Exception as e:
+                    self.logger.error(f"Error destroying subscriber for {stream_id}: {e}")
+        self.pipelines.clear()
+        self.logger.info("All pipelines stopped and cleaned.")
         super().destroy_node()
 
     # --- Helper Methods ---
@@ -164,6 +372,10 @@ def main(args=None):
     node = None
     try:
         node = OpenTeleopAvNode()
+        # Initialize GObject/GLib main loop integration with ROS event loop
+        # This allows GStreamer signals (like bus messages, appsink signals) to be processed.
+        # TODO: Add a proper GLib main loop integration if needed, or ensure rclpy spin handles it.
+        # For now, relying on rclpy.spin which might be sufficient for basic callbacks.
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
