@@ -181,7 +181,8 @@ class OpenTeleopAvNode(Node):
                     'input_topic': request.input_ros_topic,
                     'output_topic': request.output_ott_topic,
                     'ros_subscriber': None, # Will be added next
-                    'status': 'CREATED' # Initial status
+                    'status': 'CREATED', # Initial status
+                    'caps_set': False # Flag to track if caps have been set
                 }
                 self.pipelines[stream_id] = pipeline_state
                 self.logger.info(f"Pipeline {stream_id} state dictionary created.")
@@ -315,14 +316,96 @@ class OpenTeleopAvNode(Node):
     # --- ROS Topic Callbacks ---
     def ros_image_callback(self, msg: Image, stream_id: str):
         """Callback executed when a ROS Image message arrives for a stream."""
-        self.logger.debug(f"ROS Image received for stream {stream_id}, seq={msg.header.stamp.sec}.{msg.header.stamp.nanosec}")
-        # TODO: Validate stream_id exists in self.pipelines and is active
-        # TODO: Get appsrc element from self.pipelines[stream_id]
-        # TODO: Convert ROS Image data to Gst.Buffer
-        # TODO: Set Gst.Buffer caps correctly (format, width, height)
-        # TODO: Set timestamp on Gst.Buffer (from msg.header.stamp)
-        # TODO: Push buffer into appsrc using appsrc.push_buffer(gst_buffer)
-        pass
+        self.logger.debug(f"ROS Image received for stream '{stream_id}', seq={msg.header.stamp.sec}.{msg.header.stamp.nanosec}, size={msg.width}x{msg.height}, encoding={msg.encoding}")
+
+        # 1. Find the pipeline state for this stream
+        if stream_id not in self.pipelines:
+            self.logger.error(f"Received image for unknown stream_id '{stream_id}'. Ignoring.")
+            return
+            
+        pipeline_state = self.pipelines[stream_id]
+        appsrc = pipeline_state.get('appsrc')
+
+        if not appsrc: # Check only for appsrc now
+            self.logger.error(f"Appsrc not found for stream_id '{stream_id}'. Cannot process image.")
+            return
+
+        # 3. Configure appsrc caps if not already set
+        if not pipeline_state.get('caps_set', False):
+            self.logger.info(f"Attempting to set caps for stream '{stream_id}' based on first image.")
+            # Map ROS encoding to GStreamer format
+            # Based on http://docs.ros.org/en/api/sensor_msgs/html/msg/Image.html and GStreamer formats
+            encoding_map = {
+                'rgb8': 'RGB',
+                'rgba8': 'RGBA',
+                'bgr8': 'BGR',
+                'bgra8': 'BGRA',
+                'mono8': 'GRAY8',
+                'mono16': 'GRAY16_LE', # Assuming little-endian
+                # Add more mappings as needed (e.g., YUV formats, depth formats)
+                '16UC1': 'GRAY16_LE', # Common for depth images
+                '32FC1': 'GRAY32_FLOAT_LE' # Common for float depth images - need check if supported downstream
+            }
+            gst_format = encoding_map.get(msg.encoding)
+            
+            if not gst_format:
+                 self.logger.error(f"Unsupported ROS image encoding '{msg.encoding}' for stream '{stream_id}'. Cannot set caps.")
+                 # Consider stopping the pipeline or handling this error more robustly
+                 return
+                 
+            # Assume a default framerate if not available? Or make configurable.
+            # TODO: Make framerate configurable per stream?
+            framerate = "30/1" 
+            
+            # Construct caps string
+            caps_str = (
+                f"video/x-raw,"
+                f"format={gst_format},"
+                f"width={msg.width},"
+                f"height={msg.height},"
+                f"framerate={framerate}"
+            )
+            self.logger.debug(f"Constructed caps string for '{stream_id}': {caps_str}")
+            
+            # Create Gst.Caps object
+            caps = Gst.Caps.from_string(caps_str)
+            if not caps:
+                self.logger.error(f"Failed to parse caps string '{caps_str}' for stream '{stream_id}'")
+                # Consider stopping the pipeline
+                return
+                
+            # Set the caps property on appsrc
+            appsrc.set_property("caps", caps)
+            pipeline_state['caps_set'] = True # Mark caps as set
+            self.logger.info(f"Successfully set appsrc caps for stream '{stream_id}': {caps.to_string()}")
+        
+        # 4. Convert ROS Image data to Gst.Buffer
+        self.logger.debug(f"Attempting to create Gst.Buffer for '{stream_id}'")
+        try:
+            # Create a Gst.Buffer from the image data bytes
+            # Note: msg.data is usually bytes or array.array in ROS2 Python
+            buffer = Gst.Buffer.new_wrapped(bytes(msg.data))
+        except Exception as e:
+            self.logger.error(f"Failed to create Gst.Buffer from ROS Image data for '{stream_id}': {e}")
+            return
+
+        # 5. Set timestamp on Gst.Buffer (from msg.header.stamp)
+        # GStreamer timestamps are in nanoseconds
+        buffer.pts = msg.header.stamp.sec * Gst.SECOND + msg.header.stamp.nanosec
+        # DTS (Decoding Time Stamp) is often set to PTS for simple cases
+        buffer.dts = Gst.CLOCK_TIME_NONE # Let GStreamer handle DTS if possible, or set to PTS
+
+        # 6. Push buffer into appsrc
+        self.logger.debug(f"Attempting push_buffer signal emit for '{stream_id}'")
+        # Correct method: emit the 'push-buffer' signal
+        ret = appsrc.emit("push-buffer", buffer)
+        # Check the return value which should be a Gst.FlowReturn
+        if ret == Gst.FlowReturn.OK:
+            self.logger.debug(f"Successfully pushed buffer for stream '{stream_id}'")
+        else:
+            # Log the actual FlowReturn enum name for better debugging
+            flow_return_str = Gst.flow_return_get_name(ret)
+            self.logger.error(f"push-buffer signal failed for stream '{stream_id}' with return code: {flow_return_str} ({ret})")
 
     def destroy_node(self):
         self.logger.info(f'{self.get_name()} shutting down...')
