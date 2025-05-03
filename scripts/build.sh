@@ -143,6 +143,16 @@ clean_build() {
         fi
     fi
     
+    # Clean generated open_teleop_msgs code (if exists)
+    if [ -d "ros2_ws/src/open_teleop_msgs" ]; then
+         if find "ros2_ws/src/open_teleop_msgs" -name "*.py" -o -name "*.h" -o -name "*.hpp" -o -name "*.c" -o -name "*.cpp" | grep -q .; then
+            print_status "Cleaning generated code in open_teleop_msgs..."
+            # Be careful here, might need refinement based on actual generated structure
+            find ros2_ws/src/open_teleop_msgs \( -path "*/rosidl_adapter" -o -path "*/rosidl_generator_c" -o -path "*/rosidl_generator_cpp" -o -path "*/rosidl_generator_py" -o -path "*/rosidl_typesupport_c" -o -path "*/rosidl_typesupport_cpp" -o -path "*/rosidl_typesupport_fastrtps_c" -o -path "*/rosidl_typesupport_fastrtps_cpp" -o -path "*/rosidl_typesupport_interface" -o -path "*/rosidl_typesupport_introspection_c" -o -path "*/rosidl_typesupport_introspection_cpp" \) -prune -o -name "*.py" -print -delete
+            echo -e "${GREEN}✓ Cleaned generated code in open_teleop_msgs${NC}"
+        fi
+    fi
+    
     # Create required FlatBuffers directories
     mkdir -p controller/pkg/flatbuffers
     if [ -d "ros2_ws/src/ros_gateway" ]; then
@@ -245,9 +255,17 @@ build_ros2() {
         colcon build --symlink-install --packages-select ros_gateway
         
         if [ $? -eq 0 ]; then
-            echo -e "${GREEN}✓ ROS Gateway node build complete${NC}"
-            # Source the setup script
-            source install/setup.bash
+            print_status "Building open_teleop_av_node package..."
+            colcon build --symlink-install --packages-select open_teleop_av_node
+
+            if [ $? -eq 0 ]; then
+                 echo -e "${GREEN}✓ ROS Gateway node build complete${NC}"
+                 # Source the setup script
+                 source install/setup.bash
+             else
+                 print_error "Error building open_teleop_av_node package"
+                 exit 1
+            fi
         else
             print_error "Error building ROS Gateway node"
             exit 1
@@ -389,6 +407,13 @@ install_runtime() {
     
     # Copy the generated flatbuffers files
     cp -r ros2_ws/src/ros_gateway/ros_gateway/flatbuffers/* "$SITE_PACKAGES_DIR/flatbuffers/"
+
+    # Also install open_teleop_av_node site-packages
+    AV_NODE_SITE_PACKAGES_DIR="$INSTALL_DIR/ros2_overlay/open_teleop_av_node/lib/python3.12/site-packages/open_teleop_av_node"
+    if [ -d "$AV_NODE_SITE_PACKAGES_DIR" ]; then
+        print_status "Ensuring open_teleop_av_node files are properly installed..."
+        # No extra files to copy for now, just ensuring structure exists if built
+    fi
     
     # Copy CycloneDDS config to the right location
     print_status "Installing CycloneDDS config..."
@@ -529,6 +554,11 @@ main() {
             echo "2. In another terminal:"
             echo "   cd controller"
             echo "   ./bin/controller"
+            echo ""
+            echo "3. (Optional) In a third terminal:"
+            echo "   cd ros2_ws"
+            echo "   source install/setup.bash"
+            echo "   ros2 launch open_teleop_av_node av_node.launch.py"
             ;;
         gateway)
             check_dependencies
@@ -557,6 +587,24 @@ main() {
             ;;
         help)
             show_help
+            ;;
+        av_node)
+            check_dependencies
+            # Assuming generate_interfaces is not needed directly for av_node
+            # Assuming open_teleop_logger and open_teleop_msgs are built first
+            # This might need adjustment when msgs package exists
+            print_status "Building open_teleop_av_node only..."
+            cd ros2_ws
+            source /opt/ros/jazzy/setup.bash
+            source install/setup.bash # Source existing install space for dependencies
+            colcon build --symlink-install --packages-select open_teleop_av_node
+            if [ $? -eq 0 ]; then
+                echo -e "${GREEN}✓ open_teleop_av_node build complete${NC}"
+            else
+                print_error "Error building open_teleop_av_node"
+                exit 1
+            fi
+            cd ..
             ;;
         *)
             print_error "Error: Unknown command '$CMD'"
