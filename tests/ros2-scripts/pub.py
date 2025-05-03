@@ -624,7 +624,7 @@ class RosDataGenerator(Node):
             "bool": TopicPublisher(self, "bool", Bool, lambda: Bool(data=random.choice([True, False]))),
             "navsatfix": TopicPublisher(self, "navsatfix", NavSatFix, self._generate_navsatfix),
             "batterystate": TopicPublisher(self, "batterystate", BatteryState, self._generate_batterystate),
-            "image": TopicPublisher(self, "image", Image, self._generate_image),
+            "image": TopicPublisher(self, "test/image_prog", Image, self._generate_image),
             "compressedimage": TopicPublisher(self, "compressedimage", CompressedImage, self._generate_compressedimage),
             "pointcloud2": TopicPublisher(self, "pointcloud2", PointCloud2, self.localization_generator.generate_pointcloud2),
             "laserscan": TopicPublisher(self, "laserscan", LaserScan, self._generate_laserscan),
@@ -942,6 +942,7 @@ class RosDataGenerator(Node):
 
     def _generate_image(self):
         msg = Image()
+        msg.header = self._generate_header_with_frame(frame_id="camera_color_optical_frame")
         msg.height = self.image_height
         msg.width = self.image_width
         msg.encoding = "rgb8"

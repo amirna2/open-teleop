@@ -26,30 +26,67 @@ def main(args=None):
             sys.exit(1)
         node.get_logger().info('Service not available, waiting again...')
 
-    # Create the request object
-    request = ManageStream.Request()
-    request.action = ManageStream.Request.ACTION_ADD # Use constant for clarity
-    request.stream_id = "programmatic_test_stream" # Optional, can leave empty
-    request.input_ros_topic = "/test/image_prog"
-    request.output_ott_topic = "teleop.test.video_prog"
-    request.encoding_format = "video/h264"
-    request.encoder_params = "{ bitrate: 2000, quality: 25 }"
+    # --- ACTION_ADD Call --- 
+    node.get_logger().info("--- Sending ACTION_ADD request ---")
+    add_request = ManageStream.Request()
+    add_request.action = ManageStream.Request.ACTION_ADD
+    # add_request.stream_id = "test_stream_1" # Can specify or let node generate
+    add_request.input_ros_topic = "/test/image_prog"
+    add_request.output_ott_topic = "teleop.test.video_prog"
+    add_request.encoding_format = "video/h264"
+    add_request.encoder_params = "{ bitrate: 2000, quality: 25 }"
 
-    node.get_logger().info(f'Sending request: {request}')
-
-    # Call the service asynchronously
-    future = client.call_async(request)
+    node.get_logger().info(f'Sending ADD request: {add_request}')
+    future = client.call_async(add_request)
     rclpy.spin_until_future_complete(node, future)
 
+    assigned_id = None
     if future.result() is not None:
-        response = future.result()
+        add_response = future.result()
         node.get_logger().info(
-            f'Response received: success={response.success}, ' 
-            f'message="{response.message}", ' 
-            f'assigned_stream_id="{response.assigned_stream_id}"'
+            f'ADD Response received: success={add_response.success}, ' 
+            f'message="{add_response.message}", ' 
+            f'assigned_stream_id="{add_response.assigned_stream_id}"'
         )
+        if add_response.success and add_response.assigned_stream_id:
+            assigned_id = add_response.assigned_stream_id
+        else:
+            node.get_logger().error("ACTION_ADD failed or did not return a valid stream ID. Aborting.")
+            node.destroy_node()
+            rclpy.shutdown()
+            sys.exit(1)
     else:
-        node.get_logger().error(f'Service call failed: {future.exception()}')
+        node.get_logger().error(f'ACTION_ADD service call failed: {future.exception()}')
+        node.destroy_node()
+        rclpy.shutdown()
+        sys.exit(1)
+
+    # Wait a moment before enabling (optional)
+    time.sleep(1.0)
+
+    # --- ACTION_ENABLE Call --- 
+    if assigned_id:
+        node.get_logger().info(f"--- Sending ACTION_ENABLE request for stream_id: {assigned_id} ---")
+        enable_request = ManageStream.Request()
+        enable_request.action = ManageStream.Request.ACTION_ENABLE
+        enable_request.stream_id = assigned_id
+
+        node.get_logger().info(f'Sending ENABLE request: {enable_request}')
+        future = client.call_async(enable_request)
+        rclpy.spin_until_future_complete(node, future)
+
+        if future.result() is not None:
+            enable_response = future.result()
+            node.get_logger().info(
+                f'ENABLE Response received: success={enable_response.success}, ' 
+                f'message="{enable_response.message}"'
+                # assigned_stream_id is not relevant for enable response
+            )
+        else:
+            node.get_logger().error(f'ACTION_ENABLE service call failed: {future.exception()}')
+    else:
+        node.get_logger().error("Cannot send ACTION_ENABLE, no valid stream ID received from ACTION_ADD.")
+
 
     node.destroy_node()
     rclpy.shutdown()

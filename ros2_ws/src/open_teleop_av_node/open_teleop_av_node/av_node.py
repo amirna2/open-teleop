@@ -233,7 +233,6 @@ class OpenTeleopAvNode(Node):
                 if stream_id in self.pipelines:
                     del self.pipelines[stream_id]
         
-        # TODO: Implement other actions (REMOVE, UPDATE, ENABLE, DISABLE)
         elif request.action == ManageStream.Request.ACTION_REMOVE:
             response.success = False
             response.message = "ACTION_REMOVE not implemented yet."
@@ -243,9 +242,47 @@ class OpenTeleopAvNode(Node):
             response.message = "ACTION_UPDATE not implemented yet."
              # ... implementation ...
         elif request.action == ManageStream.Request.ACTION_ENABLE:
-             response.success = False
-             response.message = "ACTION_ENABLE not implemented yet."
-             # ... implementation ...
+             self.logger.info(f"Attempting to ENABLE pipeline for stream ID: {request.stream_id}")
+             stream_id = request.stream_id
+             if not stream_id:
+                 response.success = False
+                 response.message = "ACTION_ENABLE requires a valid stream_id."
+                 self.logger.error(response.message)
+                 return response
+ 
+             if stream_id not in self.pipelines:
+                 response.success = False
+                 response.message = f"Stream ID '{stream_id}' not found for ACTION_ENABLE."
+                 self.logger.error(response.message)
+                 return response
+             
+             pipeline_state = self.pipelines[stream_id]
+             pipeline = pipeline_state.get('pipeline')
+             if not pipeline:
+                 response.success = False
+                 response.message = f"Pipeline object not found for stream ID '{stream_id}'."
+                 self.logger.error(response.message)
+                 return response
+             
+             # Set state to PLAYING
+             ret = pipeline.set_state(Gst.State.PLAYING)
+             if ret == Gst.StateChangeReturn.FAILURE:
+                 self.logger.error(f"Failed to set pipeline {stream_id} to PLAYING state.")
+                 response.success = False
+                 response.message = f"Failed to set pipeline state to PLAYING."
+             elif ret == Gst.StateChangeReturn.ASYNC:
+                 # State change is happening asynchronously, might take time
+                 # For now, report success but status might not be PLAYING immediately
+                 self.logger.info(f"Pipeline {stream_id} state change to PLAYING is ASYNC.")
+                 pipeline_state['status'] = 'PLAYING_ASYNC' # Indicate async transition
+                 response.success = True
+                 response.message = f"Pipeline {stream_id} state change to PLAYING initiated asynchronously."
+             else: # SUCCESS or NO_PREROLL
+                 self.logger.info(f"Pipeline {stream_id} state set to PLAYING.")
+                 pipeline_state['status'] = 'PLAYING'
+                 response.success = True
+                 response.message = f"Pipeline {stream_id} state set to PLAYING."
+ 
         elif request.action == ManageStream.Request.ACTION_DISABLE:
              response.success = False
              response.message = "ACTION_DISABLE not implemented yet."
@@ -293,24 +330,51 @@ class OpenTeleopAvNode(Node):
     # --- Appsink Callback ---
     def on_new_sample(self, appsink: Gst.Element, stream_id: str):
         """Callback executed when appsink receives a new sample."""
-        sample = appsink.pull_sample()
+        # Correct method: emit the 'pull-sample' signal
+        sample = appsink.emit("pull-sample")
         if sample:
             buffer = sample.get_buffer()
             if buffer:
-                # TODO: Extract buffer data, timestamp, etc.
+                # Get timestamp (PTS - Presentation Time Stamp)
+                pts = buffer.pts # In nanoseconds
+                
+                # Check for keyframe (I-frame vs P/B-frame)
+                is_delta_unit = buffer.has_flags(Gst.BufferFlags.DELTA_UNIT)
+                frame_type = "Delta" if is_delta_unit else "Key"
+
+                # Map buffer to read data
+                success, map_info = buffer.map(Gst.MapFlags.READ)
+                if not success:
+                    self.logger.error(f"Appsink ({stream_id}): Failed to map buffer")
+                    # We don't unmap if map failed
+                    return Gst.FlowReturn.ERROR
+                    
+                buffer_size = map_info.size
+                # TODO: Copy map_info.data for the EncodedFrame message
+                # encoded_bytes = map_info.data # Careful: this is a reference, copy if needed outside callback
+                
+                self.logger.debug(
+                    f"Appsink ('{stream_id}'): Received sample. "
+                    f"PTS={pts/Gst.SECOND:.3f}s, Size={buffer_size} bytes, Type={frame_type}"
+                )
+                
+                # Unmap the buffer IMPORTANT!
+                buffer.unmap(map_info)
+                
                 # TODO: Create EncodedFrame message
                 # TODO: Publish message
-                map_info = buffer.map(Gst.MapFlags.READ)
-                self.logger.debug(f"Appsink ({stream_id}): Received sample, size={map_info.size}")
-                buffer.unmap(map_info)
+                
             else:
                  self.logger.warning(f"Appsink ({stream_id}): Failed to get buffer from sample")
-            # Note: GStreamer sample/buffer objects are often reused. 
-            # Don't keep references to them beyond this callback if possible.
-            # For publishing, copy the relevant data.
+                 # Sample doesn't need cleanup if buffer extraction failed?
+                 return Gst.FlowReturn.ERROR # Treat as error if buffer invalid
+
+            # GStreamer takes ownership of the sample after pull_sample sometimes?
+            # No explicit unref needed usually, but good to keep in mind.
+            # Sample automatically unreffed? Let's assume so for now unless issues arise.
             return Gst.FlowReturn.OK
         else:
-            self.logger.warning(f"Appsink ({stream_id}): Failed to pull sample")
+            self.logger.warning(f"Appsink ({stream_id}): pull_sample() returned None")
             return Gst.FlowReturn.ERROR
 
     # --- ROS Topic Callbacks ---
