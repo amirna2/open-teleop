@@ -91,55 +91,56 @@ def main(args=None):
     node.get_logger().info("--- Waiting 5 seconds after enabling... ---")
     time.sleep(5.0)
 
-    # --- ACTION_DISABLE Call ---
-    if assigned_id:
-        node.get_logger().info(f"--- Sending ACTION_DISABLE request for stream_id: {assigned_id} ---")
-        disable_request = ManageStream.Request()
-        disable_request.action = ManageStream.Request.ACTION_DISABLE
-        disable_request.stream_id = assigned_id
+    # --- ACTION_DISABLE Call --- (COMMENTED OUT FOR CONTINUOUS VIEWING)
+    # if assigned_id:
+    #     node.get_logger().info(f\"--- Sending ACTION_DISABLE request for stream_id: {assigned_id} ---\")
+    #     disable_request = ManageStream.Request()
+    #     disable_request.action = ManageStream.Request.ACTION_DISABLE
+    #     disable_request.stream_id = assigned_id
+    #
+    #     node.get_logger().info(f\'Sending DISABLE request: {disable_request}\')
+    #     future = client.call_async(disable_request)
+    #     rclpy.spin_until_future_complete(node, future)
+    #
+    #     if future.result() is not None:
+    #         disable_response = future.result()
+    #         node.get_logger().info(
+    #             f\'DISABLE Response received: success={disable_response.success}, \'
+    #             f\'message=\"{disable_response.message}\"\'
+    #         )
+    #     else:
+    #         node.get_logger().error(f\'ACTION_DISABLE service call failed: {future.exception()}\')
+    # else:
+    #     node.get_logger().error(\"Cannot send ACTION_DISABLE, no valid stream ID available.\")
+    #
+    #
+    # # Wait a moment after disabling
+    # node.get_logger().info("--- Waiting 2 seconds after disabling... ---")
+    # time.sleep(2.0)
 
-        node.get_logger().info(f'Sending DISABLE request: {disable_request}')
-        future = client.call_async(disable_request)
-        rclpy.spin_until_future_complete(node, future)
+    # --- ACTION_REMOVE Call --- (COMMENTED OUT FOR CONTINUOUS VIEWING)
+    # if assigned_id:
+    #     node.get_logger().info(f\"--- Sending ACTION_REMOVE request for stream_id: {assigned_id} ---\")
+    #     remove_request = ManageStream.Request()
+    #     remove_request.action = ManageStream.Request.ACTION_REMOVE
+    #     remove_request.stream_id = assigned_id
+    #
+    #     node.get_logger().info(f\'Sending REMOVE request: {remove_request}\')
+    #     future = client.call_async(remove_request)
+    #     rclpy.spin_until_future_complete(node, future)
+    #
+    #     if future.result() is not None:
+    #         remove_response = future.result()
+    #         node.get_logger().info(
+    #             f\'REMOVE Response received: success={remove_response.success}, \'
+    #             f\'message=\"{remove_response.message}\"\'
+    #         )
+    #     else:
+    #         node.get_logger().error(f\'ACTION_REMOVE service call failed: {future.exception()}\')
+    # else:
+    #     node.get_logger().error(\"Cannot send ACTION_REMOVE, no valid stream ID available.\")
 
-        if future.result() is not None:
-            disable_response = future.result()
-            node.get_logger().info(
-                f'DISABLE Response received: success={disable_response.success}, '
-                f'message="{disable_response.message}"'
-            )
-        else:
-            node.get_logger().error(f'ACTION_DISABLE service call failed: {future.exception()}')
-    else:
-        node.get_logger().error("Cannot send ACTION_DISABLE, no valid stream ID available.")
-
-    # Wait a moment after disabling
-    node.get_logger().info("--- Waiting 2 seconds after disabling... ---")
-    time.sleep(2.0)
-
-    # --- ACTION_REMOVE Call ---
-    if assigned_id:
-        node.get_logger().info(f"--- Sending ACTION_REMOVE request for stream_id: {assigned_id} ---")
-        remove_request = ManageStream.Request()
-        remove_request.action = ManageStream.Request.ACTION_REMOVE
-        remove_request.stream_id = assigned_id
-
-        node.get_logger().info(f'Sending REMOVE request: {remove_request}')
-        future = client.call_async(remove_request)
-        rclpy.spin_until_future_complete(node, future)
-
-        if future.result() is not None:
-            remove_response = future.result()
-            node.get_logger().info(
-                f'REMOVE Response received: success={remove_response.success}, '
-                f'message="{remove_response.message}"'
-            )
-        else:
-            node.get_logger().error(f'ACTION_REMOVE service call failed: {future.exception()}')
-    else:
-        node.get_logger().error("Cannot send ACTION_REMOVE, no valid stream ID available.")
-
-    node.get_logger().info("--- Test script finished ---")
+    node.get_logger().info("--- Test script finished (stream should remain active in av_node) ---")
     node.destroy_node()
     rclpy.shutdown()
 

@@ -142,7 +142,8 @@ class OpenTeleopAvNode(Node):
                 encoder = Gst.ElementFactory.make("x264enc", f"enc_{stream_id}")
                 if encoder:
                     # Example: Set some default encoder properties if needed
-                    encoder.set_property("tune", "zerolatency")
+                    # encoder.set_property("tune", "zerolatency") # COMMENTED OUT TO TEST QUALITY
+                    pass # Added pass to fix indentation
                     # TODO: Parse and apply params from request.encoder_params
                     
                 appsink = Gst.ElementFactory.make("appsink", f"appsink_{stream_id}")
