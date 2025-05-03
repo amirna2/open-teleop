@@ -15,6 +15,7 @@ from std_msgs.msg import String # Placeholder
 from sensor_msgs.msg import Image # Assuming Image for now, might need CompressedImage later
 from open_teleop_msgs.msg import EncodedFrame, StreamStatus
 from open_teleop_msgs.srv import ManageStream, GetStatus
+from builtin_interfaces.msg import Time # For header timestamp
 
 # Import GStreamer and GLib
 import gi
@@ -57,12 +58,16 @@ class OpenTeleopAvNode(Node):
 
         self.logger.info(f'{self.get_name()} starting up...')
 
-        # Dictionary to hold active pipeline information (keyed by stream_id)
-        # Value could be a dict or class instance containing Gst.Pipeline, relevant elements, state etc.
         self.pipelines = {}
 
-        # TODO: Setup Publishers (for EncodedFrame)
-        # self.encoded_frame_publisher = self.create_publisher(EncodedFrame, '~/encoded_frames', 10)
+        # Create Publisher for EncodedFrame messages
+        # TODO: Add QoS profile? Default is usually reliable, keep_last(10)
+        self.encoded_frame_publisher = self.create_publisher(
+            EncodedFrame, 
+            '~/encoded_frames', 
+            10 # QoS history depth
+        )
+        self.logger.info(f"Created publisher for {EncodedFrame.__name__} on '{self.encoded_frame_publisher.topic_name}'")
 
         # Setup Service Servers (ManageStream, GetStatus)
         self.manage_stream_service = self.create_service(ManageStream, '~/manage_stream', self.handle_manage_stream)
@@ -182,7 +187,10 @@ class OpenTeleopAvNode(Node):
                     'output_topic': request.output_ott_topic,
                     'ros_subscriber': None, # Will be added next
                     'status': 'CREATED', # Initial status
-                    'caps_set': False # Flag to track if caps have been set
+                    'caps_set': False, # Flag to track if caps have been set
+                    'width': 0, # Store dimensions when caps are set
+                    'height': 0,
+                    'encoding_format_req': request.encoding_format # Store requested format
                 }
                 self.pipelines[stream_id] = pipeline_state
                 self.logger.info(f"Pipeline {stream_id} state dictionary created.")
@@ -234,9 +242,50 @@ class OpenTeleopAvNode(Node):
                     del self.pipelines[stream_id]
         
         elif request.action == ManageStream.Request.ACTION_REMOVE:
-            response.success = False
-            response.message = "ACTION_REMOVE not implemented yet."
-            # ... implementation ...
+            self.logger.info(f"Attempting to REMOVE pipeline for stream ID: {request.stream_id}")
+            stream_id = request.stream_id
+            if not stream_id:
+                response.success = False
+                response.message = "ACTION_REMOVE requires a valid stream_id."
+                self.logger.error(response.message)
+                return response
+
+            if stream_id not in self.pipelines:
+                response.success = False
+                response.message = f"Stream ID '{stream_id}' not found for ACTION_REMOVE."
+                self.logger.error(response.message)
+                return response
+            
+            pipeline_state = self.pipelines[stream_id]
+            pipeline = pipeline_state.get('pipeline')
+            ros_subscriber = pipeline_state.get('ros_subscriber')
+            
+            # Stop the pipeline first
+            if pipeline:
+                 self.logger.info(f"Setting pipeline state to NULL for {stream_id}")
+                 pipeline.set_state(Gst.State.NULL)
+                 # We don't typically check the return here, NULL should be synchronous?
+            else:
+                 self.logger.warning(f"Pipeline object not found for {stream_id} during REMOVE, but proceeding.")
+                 
+            # Destroy the subscriber
+            if ros_subscriber:
+                self.logger.info(f"Destroying ROS subscriber for {stream_id}")
+                try:
+                    self.destroy_subscription(ros_subscriber)
+                except Exception as destroy_e:
+                    # Log error but continue cleanup
+                    self.logger.error(f"Error destroying subscriber during REMOVE for {stream_id}: {destroy_e}")
+            else:
+                 self.logger.warning(f"ROS subscriber not found for {stream_id} during REMOVE.")
+            
+            # Remove from our state dictionary
+            del self.pipelines[stream_id]
+            self.logger.info(f"Removed pipeline state for {stream_id}")
+            
+            response.success = True
+            response.message = f"Stream '{stream_id}' removed successfully."
+
         elif request.action == ManageStream.Request.ACTION_UPDATE:
             response.success = False
             response.message = "ACTION_UPDATE not implemented yet."
@@ -284,9 +333,45 @@ class OpenTeleopAvNode(Node):
                  response.message = f"Pipeline {stream_id} state set to PLAYING."
  
         elif request.action == ManageStream.Request.ACTION_DISABLE:
-             response.success = False
-             response.message = "ACTION_DISABLE not implemented yet."
-             # ... implementation ...
+             self.logger.info(f"Attempting to DISABLE pipeline for stream ID: {request.stream_id}")
+             stream_id = request.stream_id
+             if not stream_id:
+                 response.success = False
+                 response.message = "ACTION_DISABLE requires a valid stream_id."
+                 self.logger.error(response.message)
+                 return response
+ 
+             if stream_id not in self.pipelines:
+                 response.success = False
+                 response.message = f"Stream ID '{stream_id}' not found for ACTION_DISABLE."
+                 self.logger.error(response.message)
+                 return response
+             
+             pipeline_state = self.pipelines[stream_id]
+             pipeline = pipeline_state.get('pipeline')
+             if not pipeline:
+                 response.success = False
+                 response.message = f"Pipeline object not found for stream ID '{stream_id}'."
+                 self.logger.error(response.message)
+                 return response
+             
+             # Set state to PAUSED
+             ret = pipeline.set_state(Gst.State.PAUSED)
+             if ret == Gst.StateChangeReturn.FAILURE:
+                 self.logger.error(f"Failed to set pipeline {stream_id} to PAUSED state.")
+                 response.success = False
+                 response.message = f"Failed to set pipeline state to PAUSED."
+             elif ret == Gst.StateChangeReturn.ASYNC:
+                 self.logger.info(f"Pipeline {stream_id} state change to PAUSED is ASYNC.")
+                 pipeline_state['status'] = 'PAUSED_ASYNC'
+                 response.success = True
+                 response.message = f"Pipeline {stream_id} state change to PAUSED initiated asynchronously."
+             else: # SUCCESS or NO_PREROLL
+                 self.logger.info(f"Pipeline {stream_id} state set to PAUSED.")
+                 pipeline_state['status'] = 'PAUSED'
+                 response.success = True
+                 response.message = f"Pipeline {stream_id} state set to PAUSED."
+
         else:
             response.success = False
             response.message = f"Unknown action code: {request.action}"
@@ -330,51 +415,85 @@ class OpenTeleopAvNode(Node):
     # --- Appsink Callback ---
     def on_new_sample(self, appsink: Gst.Element, stream_id: str):
         """Callback executed when appsink receives a new sample."""
-        # Correct method: emit the 'pull-sample' signal
         sample = appsink.emit("pull-sample")
         if sample:
             buffer = sample.get_buffer()
             if buffer:
-                # Get timestamp (PTS - Presentation Time Stamp)
+                # --- Extract data from buffer --- 
                 pts = buffer.pts # In nanoseconds
-                
-                # Check for keyframe (I-frame vs P/B-frame)
                 is_delta_unit = buffer.has_flags(Gst.BufferFlags.DELTA_UNIT)
-                frame_type = "Delta" if is_delta_unit else "Key"
+                frame_type_enum = EncodedFrame.FRAME_TYPE_DELTA if is_delta_unit else EncodedFrame.FRAME_TYPE_KEY
+                frame_type_str = "Delta" if is_delta_unit else "Key"
 
                 # Map buffer to read data
                 success, map_info = buffer.map(Gst.MapFlags.READ)
                 if not success:
-                    self.logger.error(f"Appsink ({stream_id}): Failed to map buffer")
-                    # We don't unmap if map failed
+                    self.logger.error(f"Appsink ('{stream_id}'): Failed to map buffer")
                     return Gst.FlowReturn.ERROR
                     
                 buffer_size = map_info.size
-                # TODO: Copy map_info.data for the EncodedFrame message
-                # encoded_bytes = map_info.data # Careful: this is a reference, copy if needed outside callback
-                
+                # IMPORTANT: Copy the data immediately, map_info.data is a temporary view
+                encoded_bytes = map_info.data[:] # Create a copy
+                buffer.unmap(map_info) # Unmap ASAP
+                # -------------------------------
+
                 self.logger.debug(
                     f"Appsink ('{stream_id}'): Received sample. "
-                    f"PTS={pts/Gst.SECOND:.3f}s, Size={buffer_size} bytes, Type={frame_type}"
+                    f"PTS={pts/Gst.SECOND:.3f}s, Size={buffer_size} bytes, Type={frame_type_str}"
                 )
                 
-                # Unmap the buffer IMPORTANT!
-                buffer.unmap(map_info)
+                # --- Get pipeline state info --- 
+                if stream_id not in self.pipelines:
+                    self.logger.error(f"Appsink ('{stream_id}'): Pipeline state not found! Cannot publish.")
+                    # Sample cleanup should happen automatically?
+                    return Gst.FlowReturn.OK # Or Error? Let's return OK to avoid pipeline issues
                 
-                # TODO: Create EncodedFrame message
-                # TODO: Publish message
+                pipeline_state = self.pipelines[stream_id]
+                ott_topic = pipeline_state.get('output_topic')
+                width = pipeline_state.get('width', 0)
+                height = pipeline_state.get('height', 0)
+                # Use the encoding format requested by the user, assuming encoder matches
+                encoding_format = pipeline_state.get('encoding_format_req', 'video/unknown') 
                 
+                if not ott_topic:
+                     self.logger.error(f"Appsink ('{stream_id}'): Output OTT topic not found in state! Cannot publish.")
+                     return Gst.FlowReturn.OK
+                # -------------------------------
+
+                # --- Create and Publish EncodedFrame Message --- 
+                try:
+                    msg = EncodedFrame()
+                    
+                    # Convert GStreamer nanosecond PTS to ROS Time
+                    ros_time = Time()
+                    ros_time.sec = pts // Gst.SECOND # Integer division for seconds
+                    ros_time.nanosec = pts % Gst.SECOND
+                    msg.header.stamp = ros_time
+                    # TODO: Set header.frame_id? Maybe from original ROS message?
+                    
+                    msg.ott_topic = ott_topic
+                    msg.encoding_format = encoding_format
+                    msg.frame_type = frame_type_enum
+                    msg.width = width
+                    msg.height = height
+                    # Assign the copied data
+                    # msg.data = encoded_bytes # This needs to be list/array of uint8, not bytes
+                    msg.data = list(encoded_bytes)
+                    
+                    self.encoded_frame_publisher.publish(msg)
+                    self.logger.debug(f"Published EncodedFrame for '{stream_id}' to '{ott_topic}'")
+
+                except Exception as pub_e:
+                    self.logger.error(f"Appsink ('{stream_id}'): Failed to create/publish EncodedFrame: {pub_e}")
+                # ------------------------------------------------
+
             else:
-                 self.logger.warning(f"Appsink ({stream_id}): Failed to get buffer from sample")
-                 # Sample doesn't need cleanup if buffer extraction failed?
+                 self.logger.warning(f"Appsink ('{stream_id}'): Failed to get buffer from sample")
                  return Gst.FlowReturn.ERROR # Treat as error if buffer invalid
 
-            # GStreamer takes ownership of the sample after pull_sample sometimes?
-            # No explicit unref needed usually, but good to keep in mind.
-            # Sample automatically unreffed? Let's assume so for now unless issues arise.
             return Gst.FlowReturn.OK
         else:
-            self.logger.warning(f"Appsink ({stream_id}): pull_sample() returned None")
+            self.logger.warning(f"Appsink ('{stream_id}'): pull_sample() returned None")
             return Gst.FlowReturn.ERROR
 
     # --- ROS Topic Callbacks ---
@@ -441,6 +560,8 @@ class OpenTeleopAvNode(Node):
             # Set the caps property on appsrc
             appsrc.set_property("caps", caps)
             pipeline_state['caps_set'] = True # Mark caps as set
+            pipeline_state['width'] = msg.width # Store dimensions
+            pipeline_state['height'] = msg.height
             self.logger.info(f"Successfully set appsrc caps for stream '{stream_id}': {caps.to_string()}")
         
         # 4. Convert ROS Image data to Gst.Buffer
