@@ -250,24 +250,35 @@ build_ros2() {
     if [ $? -eq 0 ]; then
         print_status "Source the updated setup to make open_teleop_logger available..."
         source install/setup.bash
-        
-        print_status "Building ros_gateway package..."
-        colcon build --symlink-install --packages-select ros_gateway
-        
-        if [ $? -eq 0 ]; then
-            print_status "Building open_teleop_av_node package..."
-            colcon build --symlink-install --packages-select open_teleop_av_node
 
+        print_status "Building open_teleop_msgs dependency..."
+        colcon build --symlink-install --packages-select open_teleop_msgs
+
+        if [ $? -eq 0 ]; then
+            print_status "Source the updated setup to make open_teleop_msgs available..."
+            source install/setup.bash
+        
+            print_status "Building ros_gateway package..."
+            colcon build --symlink-install --packages-select ros_gateway
+            
             if [ $? -eq 0 ]; then
-                 echo -e "${GREEN}✓ ROS Gateway node build complete${NC}"
-                 # Source the setup script
-                 source install/setup.bash
-             else
-                 print_error "Error building open_teleop_av_node package"
-                 exit 1
+                print_status "Building open_teleop_av_node package..."
+                colcon build --symlink-install --packages-select open_teleop_av_node
+
+                if [ $? -eq 0 ]; then
+                     echo -e "${GREEN}✓ ROS packages build complete${NC}"
+                     # Source the setup script
+                     source install/setup.bash
+                 else
+                     print_error "Error building open_teleop_av_node package"
+                     exit 1
+                fi
+            else
+                print_error "Error building ROS Gateway node"
+                exit 1
             fi
         else
-            print_error "Error building ROS Gateway node"
+            print_error "Error building open_teleop_msgs package"
             exit 1
         fi
     else
@@ -394,7 +405,10 @@ install_runtime() {
     cd ros2_ws
     source /opt/ros/jazzy/setup.bash
     rm -rf build install log
-    colcon build --packages-select open_teleop_logger ros_gateway
+    # Build dependencies first, then the main nodes
+    colcon build --packages-select open_teleop_logger open_teleop_msgs
+    source install/setup.bash
+    colcon build --packages-select ros_gateway open_teleop_av_node
     cd ..
     
     # Copy with resolved symlinks
@@ -596,7 +610,12 @@ main() {
             print_status "Building open_teleop_av_node only..."
             cd ros2_ws
             source /opt/ros/jazzy/setup.bash
+            # Ensure dependencies are built/available
+            print_status "Ensuring dependencies (logger, msgs) are built..."
+            colcon build --symlink-install --packages-up-to open_teleop_msgs
+            print_status "Sourcing potentially updated install space..."
             source install/setup.bash # Source existing install space for dependencies
+            print_status "Building open_teleop_av_node..."
             colcon build --symlink-install --packages-select open_teleop_av_node
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}✓ open_teleop_av_node build complete${NC}"

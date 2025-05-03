@@ -1,0 +1,30 @@
+# open_teleop_msgs/srv/ManageStream.srv
+# Service to manage encoding streams in the AV Node
+
+# --- Request ---
+
+# Action definitions
+uint8 ACTION_ADD = 0
+uint8 ACTION_REMOVE = 1
+uint8 ACTION_UPDATE = 2
+uint8 ACTION_ENABLE = 3  # Start/Resume publishing for an existing stream
+uint8 ACTION_DISABLE = 4 # Stop/Pause publishing for an existing stream
+
+uint8 action              # What action to perform
+
+string stream_id          # Unique ID for the stream. Required for REMOVE, UPDATE, ENABLE, DISABLE.
+                          # If empty on ADD, node should generate one and return it.
+
+# Fields relevant for ADD/UPDATE actions
+string input_ros_topic    # e.g., "/robot/camera/image_raw"
+string output_ott_topic   # e.g., "teleop.video.primary"
+string encoding_format    # e.g., "video/h264"
+string encoder_params     # YAML/JSON string or similar for specific encoder params (bitrate, quality, GOP size, etc.)
+
+---
+
+# --- Response ---
+
+bool success              # True if the action was accepted/initiated successfully
+string message            # Status message or error description
+string assigned_stream_id # The stream_id assigned by the node (especially if empty on ADD request) 

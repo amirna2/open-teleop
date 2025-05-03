@@ -1,0 +1,12 @@
+# open_teleop_msgs/srv/GetStatus.srv
+# Service to query the current status of the AV Node and its streams
+
+# --- Request ---
+# (Empty)
+
+---
+
+# --- Response ---
+
+open_teleop_msgs/StreamStatus[] active_streams # List of current stream configurations and statuses
+string node_status            # Overall status of the av_node (e.g., "OK", "DEGRADED", "ERROR") 

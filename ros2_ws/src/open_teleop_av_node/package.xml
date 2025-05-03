@@ -12,7 +12,8 @@
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend> <!-- For input Image/CompressedImage -->
-  <!-- <depend>open_teleop_msgs</depend> --> <!-- Will be added once created -->
+  <depend>open_teleop_msgs</depend>
+  <depend>open_teleop_logger</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
