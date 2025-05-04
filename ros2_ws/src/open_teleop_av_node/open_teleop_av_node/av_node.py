@@ -137,9 +137,20 @@ class OpenTeleopAvNode(Node):
                 appsrc = Gst.ElementFactory.make("appsrc", f"appsrc_{stream_id}")
                 videoconvert = Gst.ElementFactory.make("videoconvert", f"vconv_{stream_id}")
                 
+                # --- Encoder Selection (Auto-Detect HW Accel) ---
+                encoder_name = "x264enc" # Default to software encoder
+                nv_encoder_factory = Gst.ElementFactory.find("nvh264enc")
+                if nv_encoder_factory:
+                    self.logger.info(f"Hardware encoder 'nvh264enc' found. Using it for stream {stream_id}.")
+                    encoder_name = "nvh264enc"
+                else:
+                    self.logger.info(f"Hardware encoder 'nvh264enc' not found. Falling back to software 'x264enc' for stream {stream_id}.")
+                # --- End Encoder Selection ---
+                
                 # TODO: Select encoder based on request.encoding_format
                 # For now, hardcode x264enc assuming request.encoding_format is video/h264
-                encoder = Gst.ElementFactory.make("x264enc", f"enc_{stream_id}")
+                # --- Use selected encoder_name ---
+                encoder = Gst.ElementFactory.make(encoder_name, f"enc_{stream_id}")
                 if encoder:
                     # Example: Set some default encoder properties if needed
                     # encoder.set_property("tune", "zerolatency") # COMMENTED OUT TO TEST QUALITY
