@@ -151,9 +151,13 @@ class EncodedFrameSubscriber:
             # Get the binary buffer and send it via ZeroMQ
             buf = builder.Output()
             
-            # Send to controller with high priority
+            # Send to controller
             self.logger.debug(f"Sending encoded frame ({len(buf)} bytes) for {msg.ott_topic}")
-            self.zmq_client.send_request_binary(buf, is_high_priority=True)
+            reply_str = self.zmq_client.send_request_binary(buf)
+            
+            # Log the reply (or lack thereof)
+            if reply_str:
+                self.logger.debug(f"Reply from ZeroMQ: {reply_str}")
             
         except Exception as e:
             self.logger.error(f"Error handling encoded frame: {e}")
