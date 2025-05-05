@@ -1,0 +1,72 @@
+# Test Open-Teleop Configuration with AV Integration
+version: "1.0"
+config_id: "av-test-config-2025-05-24"
+lastUpdated: "2025-05-04T00:00:00Z"
+robot_id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
+
+# Default settings for topics
+defaults:
+  priority: "STANDARD"
+  direction: "OUTBOUND"
+  source_type: "ROS2_CDR"
+
+# ROS topic mappings  
+topic_mappings:
+  - ros_topic: "/robot/battery_state"
+    ott: "teleop.sensor.battery_state"
+    message_type: "sensor_msgs/msg/BatteryState"
+    priority: "LOW"
+  
+  - ros_topic: "/robot/odom"
+    ott: "teleop.sensor.odometry"
+    message_type: "nav_msgs/msg/Odometry"
+    priority: "STANDARD"
+  
+  - ros_topic: "/robot/cmd_vel"
+    ott: "teleop.control.cmd_vel"
+    message_type: "geometry_msgs/msg/Twist"
+    direction: "INBOUND"
+    priority: "HIGH"
+
+  # AV stream configurations
+  - ros_topic: "/test/image_prog"
+    ott: "teleop.video.main_camera"
+    message_type: "sensor_msgs/msg/Image"
+    encoder_params:
+      encoding_format: "video/h264"
+      bitrate: 2000
+      quality: 25
+      tune: "zerolatency"
+      profile: "baseline"
+    priority: "HIGH"
+  
+  - ros_topic: "/robot/depth_camera/image_raw"
+    ott: "teleop.video.depth_camera"
+    message_type: "sensor_msgs/msg/Image"
+    encoder_params:
+      encoding_format: "video/h264"
+      bitrate: 1000
+      quality: 30
+      tune: "zerolatency"
+      profile: "baseline"
+    priority: "STANDARD"
+
+# Throttling settings per priority level (0 = no throttling)
+throttle_rates:
+  high_hz: 0
+  standard_hz: 10
+  low_hz: 1
+
+# ZMQ settings
+zeromq:
+  controller_address: "tcp://127.0.0.1:5555"
+  publish_address: "tcp://127.0.0.1:5556"
+  message_buffer_size: 1000
+  reconnect_interval_ms: 1000
+
+# Controller settings
+controller:
+  server:
+    port: 8080
+    request_timeout: 5000
+    max_request_size: 10485760 

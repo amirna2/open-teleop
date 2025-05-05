@@ -45,12 +45,13 @@ type ServerConfig struct {
 
 // TopicMapping represents a mapping between ROS topics and Open-Teleop topics
 type TopicMapping struct {
-	RosTopic    string `yaml:"ros_topic" json:"ros_topic"`
-	OttTopic    string `yaml:"ott" json:"ott"`
-	MessageType string `yaml:"message_type" json:"message_type"`
-	Priority    string `yaml:"priority" json:"priority"`
-	Direction   string `yaml:"direction" json:"direction"`
-	SourceType  string `yaml:"source_type" json:"source_type"`
+	RosTopic      string                 `yaml:"ros_topic" json:"ros_topic"`
+	OttTopic      string                 `yaml:"ott" json:"ott"`
+	MessageType   string                 `yaml:"message_type" json:"message_type"`
+	Priority      string                 `yaml:"priority" json:"priority"`
+	Direction     string                 `yaml:"direction" json:"direction"`
+	SourceType    string                 `yaml:"source_type" json:"source_type"`
+	EncoderParams map[string]interface{} `yaml:"encoder_params,omitempty" json:"encoder_params,omitempty"`
 }
 
 // DefaultsConfig holds default values for topic mappings
