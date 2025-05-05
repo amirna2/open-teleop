@@ -16,6 +16,7 @@ from sensor_msgs.msg import Image # Assuming Image for now, might need Compresse
 from open_teleop_msgs.msg import EncodedFrame, StreamStatus
 from open_teleop_msgs.srv import ManageStream, GetStatus
 from builtin_interfaces.msg import Time # For header timestamp
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy # Import QoS
 
 # Import GStreamer and GLib
 import gi
@@ -201,6 +202,52 @@ class GstPipeline:
         if self.pipeline:
             self.pipeline.set_state(Gst.State.NULL)
 
+    # Rename push_ros_image for clarity when used as a callback
+    def ros_image_callback(self, msg):
+        """Callback for ROS Image messages, pushes image into the pipeline."""
+        if not self.appsrc:
+            self.logger.error(f"Cannot push image: appsrc not initialized for {self.stream_id}")
+            return # Don't return False from callback
+
+        self.logger.debug(f"ROS Image received for stream '{self.stream_id}', seq={msg.header.stamp.sec}.{msg.header.stamp.nanosec}, size={msg.width}x{msg.height}, encoding={msg.encoding}")
+
+        # Configure caps if not already set
+        if not self.caps_set:
+            if not self._set_caps_from_image(msg):
+                self.logger.error(f"Failed to set caps from image for stream '{self.stream_id}'. Dropping frame.")
+                return # Don't return False
+
+        # Create buffer from ROS Image data
+        try:
+            # IMPORTANT: Ensure data is treated as bytes
+            if isinstance(msg.data, list):
+                image_bytes = bytes(msg.data)
+            elif isinstance(msg.data, bytes):
+                image_bytes = msg.data
+            else:
+                 # Assuming numpy array if not list or bytes (common in ROS2)
+                 image_bytes = msg.data.tobytes()
+
+            buffer = Gst.Buffer.new_wrapped(image_bytes)
+
+            # Set timestamp
+            buffer.pts = msg.header.stamp.sec * Gst.SECOND + msg.header.stamp.nanosec
+            buffer.dts = Gst.CLOCK_TIME_NONE # Indicate DTS is not relevant
+
+            # Push buffer
+            self.logger.debug(f"Attempting to create Gst.Buffer for '{self.stream_id}'")
+            ret = self.appsrc.emit("push-buffer", buffer)
+            if ret != Gst.FlowReturn.OK:
+                flow_return_str = Gst.flow_return_get_name(ret)
+                self.logger.error(f"push-buffer failed for {self.stream_id}: {flow_return_str} ({ret})")
+            else:
+                self.logger.debug(f"Successfully pushed buffer for stream '{self.stream_id}'")
+
+        except Exception as e:
+            self.logger.error(f"Error processing/pushing image to pipeline for {self.stream_id}: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+
 
 class OpenTeleopAvNode(Node):
     """ROS2 Node for handling A/V encoding and service calls."""
@@ -252,9 +299,6 @@ class OpenTeleopAvNode(Node):
         # Setup Service Servers (ManageStream, GetStatus)
         self.manage_stream_service = self.create_service(ManageStream, '~/manage_stream', self.handle_manage_stream)
         self.get_status_service = self.create_service(GetStatus, '~/get_status', self.handle_get_status)
-
-        # TODO: Setup Subscribers (to input sensor_msgs/Image topics - likely managed dynamically)
-        # Moved subscriber creation into handle_manage_stream
 
         # TODO: Placeholder timer for testing - remove if no longer needed
         self.timer = self.create_timer(5.0, self.timer_callback) # Increase interval
@@ -554,120 +598,146 @@ class OpenTeleopAvNode(Node):
 
     def _handle_add_stream(self, request, response):
         """Handle ACTION_ADD request."""
-        # Validate inputs
-        if not all([request.input_ros_topic, request.output_ott_topic, request.encoding_format]):
-            response.success = False
-            response.message = "ACTION_ADD requires input_ros_topic, output_ott_topic, and encoding_format."
-            self.logger.error(response.message)
-            return response
-
-        # Generate/Assign Stream ID
         stream_id = request.stream_id
         if not stream_id:
-            stream_id = str(uuid.uuid4())
+            stream_id = str(uuid.uuid4()) # Generate ID if not provided
             self.logger.info(f"No stream_id provided, generated: {stream_id}")
-        
-        response.assigned_stream_id = stream_id
 
-        # Check for collision
         if stream_id in self.pipelines:
             response.success = False
-            response.message = f"Stream ID '{stream_id}' already exists."
+            response.message = f"Stream ID {stream_id} already exists."
             self.logger.error(response.message)
             return response
 
-        self.logger.info(f"Attempting to add pipeline for stream ID: {stream_id}")
+        # Validate required fields
+        if not request.input_ros_topic or not request.output_ott_topic:
+            response.success = False
+            response.message = "Missing required fields: input_ros_topic and output_ott_topic"
+            self.logger.error(response.message)
+            return response
+            
+        self.logger.info(f"Attempting to add stream: {stream_id}")
+        self.logger.debug(f"  Input: {request.input_ros_topic}")
+        self.logger.debug(f"  Output: {request.output_ott_topic}")
+        self.logger.debug(f"  Format: {request.encoding_format}")
+        self.logger.debug(f"  Params: {request.encoder_params}")
 
-        # Create GStreamer Pipeline
         try:
-            # Create new pipeline object
+            # Create the GstPipeline instance
             pipeline = GstPipeline(
-                self.logger,
-                stream_id,
-                request.input_ros_topic,
-                request.output_ott_topic,
-                request.encoding_format,
-                request.encoder_params
+                logger=self.logger,
+                stream_id=stream_id,
+                input_topic=request.input_ros_topic,
+                output_topic=request.output_ott_topic,
+                encoding_format=request.encoding_format,
+                encoder_params=request.encoder_params # Pass raw params string
             )
             
-            # Store pipeline in our dictionary FIRST before connecting signals and subscribers
-            self.pipelines[stream_id] = pipeline
-            self.logger.info(f"Pipeline {stream_id} added to active pipelines dictionary.")
+            # --- Add ROS Subscriber Creation Here --- 
+            self.logger.info(f"Creating ROS subscriber for input topic: {pipeline.input_topic}")
+            
+            # Assuming sensor_msgs/Image for now, add type resolution if needed later
+            msg_type = Image 
+            
+            # Create a partial function binding the pipeline instance to its callback
+            callback = functools.partial(pipeline.ros_image_callback) 
+            
+            # Define QoS (adjust as needed, match publisher if possible)
+            qos = QoSProfile(
+                reliability=QoSReliabilityPolicy.BEST_EFFORT, # Often suitable for video
+                history=QoSHistoryPolicy.KEEP_LAST,
+                depth=1 # Process latest frame
+            )
+            
+            pipeline.ros_subscriber = self.create_subscription(
+                msg_type,
+                pipeline.input_topic, 
+                callback,
+                qos
+            )
+            
+            if pipeline.ros_subscriber is None:
+                 # This check might not be strictly necessary as create_subscription usually raises on error
+                 raise RuntimeError(f"Failed to create ROS subscriber for topic '{pipeline.input_topic}'")
+                 
+            self.logger.info(f"Successfully created subscriber for '{pipeline.input_topic}'")
+            # --- End ROS Subscriber Creation --- 
             
             # Connect appsink signal
-            pipeline.appsink.connect("new-sample", self.on_new_sample, stream_id)
+            if pipeline.appsink:
+                handler_id = pipeline.appsink.connect("new-sample", self.on_new_sample, stream_id)
+                if handler_id == 0:
+                     self.logger.warning(f"Failed to connect new-sample signal for appsink '{stream_id}'")
+                else:
+                     self.logger.debug(f"Connected new-sample signal for appsink '{stream_id}' (handler: {handler_id})")
             
-            # Create ROS subscriber
-            callback_with_id = functools.partial(self.ros_image_callback, stream_id=stream_id)
-            ros_subscriber = self.create_subscription(
-                Image,
-                request.input_ros_topic,
-                callback_with_id,
-                10
-            )
-            pipeline.ros_subscriber = ros_subscriber
-            
-            # Set initial state to PAUSED
-            ret = pipeline.set_state(Gst.State.PAUSED)
-            if ret == Gst.StateChangeReturn.FAILURE:
-                raise RuntimeError(f"Failed to set pipeline {stream_id} to PAUSED state.")
-            
+            # Store the pipeline
+            self.pipelines[stream_id] = pipeline
+
             response.success = True
-            response.message = f"Pipeline for stream '{stream_id}' created and paused successfully."
-            
+            response.assigned_stream_id = stream_id
+            response.message = f"Stream {stream_id} added successfully."
+            self.logger.info(response.message)
+
         except Exception as e:
-            self.logger.error(f"Failed during pipeline creation/setup for stream '{stream_id}': {e}")
-            # Clean up ROS subscriber if created
-            if 'ros_subscriber' in locals() and ros_subscriber:
-                try:
-                    self.destroy_subscription(ros_subscriber)
-                except Exception as destroy_e:
-                    self.logger.error(f"Error destroying subscriber during cleanup: {destroy_e}")
-            
-            # Remove the pipeline from the dictionary if it was added
-            if stream_id in self.pipelines:
-                del self.pipelines[stream_id]
-                
+            self.logger.error(f"Failed to add stream {stream_id}: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             response.success = False
-            response.message = f"Failed to create/setup pipeline: {e}"
-        
+            response.message = f"Failed to add stream: {e}"
+            # Clean up partially created pipeline if necessary (GstPipeline init handles basic cleanup)
+            if 'pipeline' in locals() and pipeline:
+                 pipeline.cleanup()
+            if stream_id in self.pipelines:
+                 del self.pipelines[stream_id] # Remove if it was added before error
+
         return response
 
     def _handle_remove_stream(self, request, response):
         """Handle ACTION_REMOVE request."""
         stream_id = request.stream_id
-        if not stream_id:
-            response.success = False
-            response.message = "ACTION_REMOVE requires a valid stream_id."
-            self.logger.error(response.message)
-            return response
+        self.logger.info(f"Attempting to remove stream: {stream_id}")
 
         if stream_id not in self.pipelines:
             response.success = False
-            response.message = f"Stream ID '{stream_id}' not found for ACTION_REMOVE."
+            response.message = f"Stream ID {stream_id} not found."
             self.logger.error(response.message)
             return response
-        
-        pipeline = self.pipelines[stream_id]
-        
-        # Stop the pipeline
-        self.logger.info(f"Setting pipeline state to NULL for {stream_id}")
-        pipeline.set_state(Gst.State.NULL)
-        
-        # Destroy the subscriber
-        if pipeline.ros_subscriber:
-            self.logger.info(f"Destroying ROS subscriber for {stream_id}")
-            try:
-                self.destroy_subscription(pipeline.ros_subscriber)
-            except Exception as destroy_e:
-                self.logger.error(f"Error destroying subscriber during REMOVE for {stream_id}: {destroy_e}")
-        
-        # Remove from our state dictionary
-        del self.pipelines[stream_id]
-        self.logger.info(f"Removed pipeline state for {stream_id}")
-        
-        response.success = True
-        response.message = f"Stream '{stream_id}' removed successfully."
+
+        try:
+            pipeline_to_remove = self.pipelines[stream_id]
+
+            # --- Destroy the associated ROS subscriber --- 
+            if pipeline_to_remove.ros_subscriber:
+                self.logger.info(f"Destroying ROS subscriber for '{pipeline_to_remove.input_topic}'")
+                try:
+                    self.destroy_subscription(pipeline_to_remove.ros_subscriber)
+                    pipeline_to_remove.ros_subscriber = None # Clear reference
+                    self.logger.info(f"Successfully destroyed subscriber for '{pipeline_to_remove.input_topic}'")
+                except Exception as sub_e:
+                     self.logger.error(f"Error destroying subscriber for '{pipeline_to_remove.input_topic}': {sub_e}")
+                     # Continue cleanup despite subscriber error
+            # --------------------------------------------
+
+            # Cleanup GStreamer resources
+            self.logger.info(f"Cleaning up GStreamer pipeline for {stream_id}")
+            pipeline_to_remove.cleanup()
+            self.logger.info(f"GStreamer pipeline cleanup complete for {stream_id}")
+
+            # Remove from tracking dictionary
+            del self.pipelines[stream_id]
+
+            response.success = True
+            response.message = f"Stream {stream_id} removed successfully."
+            self.logger.info(response.message)
+
+        except Exception as e:
+            self.logger.error(f"Failed to remove stream {stream_id}: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            response.success = False
+            response.message = f"Failed to remove stream: {e}"
+
         return response
 
     def _handle_enable_stream(self, request, response):

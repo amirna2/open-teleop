@@ -41,17 +41,60 @@ class EncodedFrameSubscriber:
         
         # Create service clients
         self.logger.info("Creating service clients for AV node...")
-        self.manage_stream_client = self.node.create_client(
-            ManageStream,
-            '/open_teleop_av_node/manage_stream'
-        )
-        self.get_status_client = self.node.create_client(
-            GetStatus,
-            '/open_teleop_av_node/get_status'
-        )
+        self.manage_stream_client = None # Initialize to None
+        self.get_status_client = None # Initialize to None
         
+        # Try ManageStream client
+        self.logger.info("Attempting to create ManageStream client for service '/open_teleop_av_node/manage_stream'...")
+        try:
+            self.manage_stream_client = self.node.create_client(
+                ManageStream,
+                '/open_teleop_av_node/manage_stream'
+            )
+            if self.manage_stream_client is None:
+                 self.logger.error("!!! node.create_client returned None for ManageStream!")
+            else:
+                 self.logger.info("ManageStream client object created successfully.")
+                 # Now wait for it
+                 self.logger.info("Waiting up to 5s for ManageStream service to become available...")
+                 if not self.manage_stream_client.wait_for_service(timeout_sec=5.0):
+                     self.logger.error("!!! ManageStream service wait timed out.")
+                 else:
+                     self.logger.info("ManageStream service is available.")
+        except Exception as e:
+             self.logger.error(f"!!! Exception during ManageStream client creation/wait: {e}")
+             import traceback
+             self.logger.error(traceback.format_exc())
+             self.manage_stream_client = None # Ensure it's None on failure
+        
+        # Try GetStatus client (less critical for startup)
+        self.logger.info("Attempting to create GetStatus client for service '/open_teleop_av_node/get_status'...")
+        try:
+            self.get_status_client = self.node.create_client(
+                GetStatus,
+                '/open_teleop_av_node/get_status'
+            )
+            if self.get_status_client is None:
+                 self.logger.error("!!! node.create_client returned None for GetStatus!")
+            else:
+                self.logger.info("GetStatus client object created successfully.")
+                # Optional: Add a short wait here if needed, but less critical for init
+                # if not self.get_status_client.wait_for_service(timeout_sec=2.0):
+                #     self.logger.warning("GetStatus service wait timed out (non-critical).")
+                # else:
+                #     self.logger.info("GetStatus service is available.")
+        except Exception as e:
+             self.logger.error(f"!!! Exception during GetStatus client creation: {e}")
+             self.get_status_client = None
+        
+        # Check if the critical client was created successfully before proceeding
+        if self.manage_stream_client is None:
+             self.logger.error("ManageStream client was not created successfully. AV stream configuration will likely fail.")
+             # Depending on requirements, you might want to raise an error here
+             # raise RuntimeError("Failed to create critical ManageStream service client")
+            
         self.streams = {}  # To track configured streams
-        self.logger.info("EncodedFrameSubscriber initialized")
+        self.logger.info("EncodedFrameSubscriber initialized (client creation attempted).")
     
     def handle_encoded_frame(self, msg):
         """
