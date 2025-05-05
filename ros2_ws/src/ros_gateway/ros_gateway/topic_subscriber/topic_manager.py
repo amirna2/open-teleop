@@ -6,8 +6,9 @@ import flatbuffers
 from rclpy.serialization import serialize_message
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 
-# Import the generated FlatBuffer code
-from ros_gateway.flatbuffers.open_teleop.message import OttMessage, ContentType
+# Import the necessary FlatBuffer components
+from ..flatbuffers.open_teleop.message.OttMessage import OttMessageStart, AddVersion, AddPayload, AddContentType, AddOtt, AddTimestampNs, End
+from ..flatbuffers.open_teleop.message.ContentType import ContentType
 
 class TopicManager:
     """
@@ -284,16 +285,16 @@ class TopicManager:
             # Create the payload byte vector
             payload = builder.CreateByteVector(serialized_msg)
             
-            # Start building the OttMessage
-            OttMessage.OttMessageStart(builder)
-            OttMessage.OttMessageAddVersion(builder, 1)
-            OttMessage.OttMessageAddPayload(builder, payload)
-            OttMessage.OttMessageAddContentType(builder, ContentType.ContentType.ROS2_MESSAGE)
-            OttMessage.OttMessageAddOtt(builder, ott_fb)
-            OttMessage.OttMessageAddTimestampNs(builder, timestamp_ns)
+            # Start building the OttMessage using direct function calls
+            OttMessageStart(builder)
+            AddVersion(builder, 1) # Assuming version 1 for now
+            AddPayload(builder, payload)
+            AddContentType(builder, ContentType.ROS2_MESSAGE)
+            AddOtt(builder, ott_fb)
+            AddTimestampNs(builder, timestamp_ns)
             
             # Finish the message
-            message = OttMessage.OttMessageEnd(builder)
+            message = End(builder)
             builder.Finish(message)
             
             # Get the binary buffer and send it to the controller

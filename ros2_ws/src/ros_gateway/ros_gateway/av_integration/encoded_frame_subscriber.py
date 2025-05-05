@@ -9,7 +9,17 @@ from open_teleop_msgs.msg import EncodedFrame
 from open_teleop_msgs.srv import ManageStream, GetStatus
 
 # Import the generated FlatBuffer code
-from ros_gateway.flatbuffers.open_teleop.message import OttMessage, ContentType
+from ros_gateway.flatbuffers.open_teleop.message import ContentType, OttMessage # Import class and enum
+# Import builder functions DIRECTLY from the OttMessage module file
+from ros_gateway.flatbuffers.open_teleop.message.OttMessage import (
+    OttMessageStart,
+    OttMessageAddVersion,
+    OttMessageAddPayload,
+    OttMessageAddContentType,
+    OttMessageAddOtt,
+    OttMessageAddTimestampNs,
+    OttMessageEnd
+)
 
 class EncodedFrameSubscriber:
     """
@@ -115,28 +125,27 @@ class EncodedFrameSubscriber:
             # Create the OTT topic string
             ott_fb = builder.CreateString(msg.ott_topic)
             
-            # Create the media format string
-            media_format_fb = builder.CreateString(msg.encoding_format)
-            
             # Create the payload byte vector
             payload = builder.CreateByteVector(bytes(msg.data))
             
             # Start building the OttMessage
-            OttMessage.OttMessageStart(builder)
-            OttMessage.OttMessageAddVersion(builder, 1)
-            OttMessage.OttMessageAddPayload(builder, payload)
-            OttMessage.OttMessageAddContentType(builder, ContentType.ContentType.ENCODED_MEDIA)
-            OttMessage.OttMessageAddOtt(builder, ott_fb)
-            OttMessage.OttMessageAddTimestampNs(builder, timestamp_ns)
+            OttMessageStart(builder)
+            OttMessageAddVersion(builder, 1)
+            OttMessageAddPayload(builder, payload)
+            OttMessageAddContentType(builder, ContentType.ENCODED_VIDEO_FRAME)
+            OttMessageAddOtt(builder, ott_fb)
+            OttMessageAddTimestampNs(builder, timestamp_ns)
             
-            # Add media-specific fields
-            OttMessage.OttMessageAddMediaFormat(builder, media_format_fb)
-            OttMessage.OttMessageAddFrameType(builder, msg.frame_type)
-            OttMessage.OttMessageAddWidth(builder, msg.width)
-            OttMessage.OttMessageAddHeight(builder, msg.height)
+            # NOTE: Media-specific fields are not part of the current OttMessage schema
+            # If added to schema later, uncomment and ensure direct function call style:
+            # media_format_fb = builder.CreateString(msg.encoding_format)
+            # OttMessageAddMediaFormat(builder, media_format_fb)
+            # OttMessageAddFrameType(builder, msg.frame_type)
+            # OttMessageAddWidth(builder, msg.width)
+            # OttMessageAddHeight(builder, msg.height)
             
             # Finish the message
-            message = OttMessage.OttMessageEnd(builder)
+            message = OttMessageEnd(builder)
             builder.Finish(message)
             
             # Get the binary buffer and send it via ZeroMQ

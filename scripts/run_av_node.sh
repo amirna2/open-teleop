@@ -44,6 +44,7 @@ WS_SETUP="$PROJECT_ROOT/ros2_ws/install/setup.bash"
 if [ -f "$WS_SETUP" ]; then
     source "$WS_SETUP"
     print_status "Sourced local workspace: $WS_SETUP"
+    print_status "PYTHONPATH=$PYTHONPATH" 
 else
     print_error "Error: Local workspace setup file not found: $WS_SETUP"
     print_error "Please run the build script (./scripts/build.sh) first."

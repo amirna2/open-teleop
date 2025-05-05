@@ -17,6 +17,13 @@ topic_mappings:
     message_type: "sensor_msgs/msg/BatteryState"
     priority: "LOW"
   
+  - ros_topic: "/string"
+    ott: "teleop.status"
+    priority: "STANDARD"
+    message_type: "std_msgs/msg/String"
+    direction: "OUTBOUND"
+    source_type: "ROS2_CDR"
+
   - ros_topic: "/robot/odom"
     ott: "teleop.sensor.odometry"
     message_type: "nav_msgs/msg/Odometry"

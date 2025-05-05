@@ -4,8 +4,9 @@
 namespace open_teleop.message;
 
 enum ContentType : byte {
-  ROS2_MESSAGE = 0,                               // Standard ROS2 message (serialized in CDR)
-  JSON_COMMAND = 1                                // Generic JSON command (e.g., Twist from UI)
+  ROS2_MESSAGE = 0,           // Standard ROS2 message (serialized in CDR)
+  JSON_COMMAND = 1,           // Generic JSON command (e.g., Twist from UI)
+  ENCODED_VIDEO_FRAME = 2     // Payload contains an encoded video frame
   // Other types can be added later as the platform evolves
 }
 
@@ -13,8 +14,8 @@ table OttMessage {
   version:          uint8 = 1;  // Schema version, starting with 1
   
   // Core message content
-  payload:          [ubyte];    // Raw message data (ROS2 CDR format for ROS messages)
-  content_type:     ContentType = ROS2_MESSAGE;   // Default to ROS2 message
+  payload:          [ubyte];    // Raw message data
+  content_type:     ContentType = ROS2_MESSAGE;
   
   // Single identifier from config
   ott:              string;   // Open-Teleop-Topic name (e.g., "teleop.sensor.battery_state")  
