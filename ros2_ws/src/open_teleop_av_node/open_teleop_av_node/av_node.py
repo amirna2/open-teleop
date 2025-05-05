@@ -6,6 +6,7 @@ import os
 # import time # No longer needed
 import uuid # For generating stream IDs
 import functools # For passing args to subscriber callback
+import json # Import json module
 
 # Import custom logger
 import open_teleop_logger as log
@@ -32,8 +33,26 @@ class GstPipeline:
         self.input_topic = input_topic
         self.output_topic = output_topic
         self.encoding_format = encoding_format
-        self.encoder_params = encoder_params or {}
+        # self.encoder_params = encoder_params or {} # Old: stores string
         
+        # Parse encoder_params JSON string into a dictionary
+        self.parsed_encoder_params = {}
+        if isinstance(encoder_params, str):
+            try:
+                self.parsed_encoder_params = json.loads(encoder_params)
+                self.logger.debug(f"Parsed encoder_params for {stream_id}: {self.parsed_encoder_params}")
+            except json.JSONDecodeError as e:
+                self.logger.error(f"Failed to parse encoder_params JSON for {stream_id}: {e}. Raw params: '{encoder_params}'")
+                # Raise error to prevent pipeline creation with invalid params
+                raise ValueError(f"Invalid encoder_params JSON: {e}") from e
+        elif isinstance(encoder_params, dict):
+             self.logger.warning(f"encoder_params for {stream_id} was already a dict, not expected JSON string.")
+             self.parsed_encoder_params = encoder_params # Use if already dict (fallback)
+        else:
+            self.logger.warning(f"No valid encoder_params provided for {stream_id}. Using defaults.")
+            # Define default structure if needed, though validation should prevent this
+            # self.parsed_encoder_params = { ... defaults ... }
+
         self.pipeline = None
         self.appsrc = None
         self.appsink = None
@@ -57,9 +76,40 @@ class GstPipeline:
             videoconvert = Gst.ElementFactory.make("videoconvert", f"vconv_{self.stream_id}")
             
             # Select encoder based on encoding_format
-            # Currently only supporting H.264
-            self.encoder = Gst.ElementFactory.make("x264enc", f"enc_{self.stream_id}")
-            
+            # TODO: Add support for other codecs based on self.encoding_format
+            if self.encoding_format == "video/h264":
+                self.encoder = Gst.ElementFactory.make("x264enc", f"enc_{self.stream_id}")
+                if self.encoder:
+                     # Apply settings from parsed_encoder_params
+                     # Set tune for low latency (common for teleop)
+                     self.encoder.set_property("tune", "zerolatency") 
+                     self.logger.debug(f"Set x264enc tune=zerolatency for {self.stream_id}")
+                     
+                     if 'bitrate' in self.parsed_encoder_params:
+                         bitrate_kbps = int(self.parsed_encoder_params['bitrate'])
+                         self.encoder.set_property("bitrate", bitrate_kbps)
+                         self.logger.debug(f"Set x264enc bitrate={bitrate_kbps} kbps for {self.stream_id}")
+                         
+                     if 'gop_size' in self.parsed_encoder_params:
+                         gop_frames = int(self.parsed_encoder_params['gop_size'])
+                         # x264enc uses key-int-max for GOP size
+                         self.encoder.set_property("key-int-max", gop_frames) 
+                         self.logger.debug(f"Set x264enc key-int-max={gop_frames} frames for {self.stream_id}")
+                     
+                     # TODO: Implement transcoding based on config parameters.
+                     # The current pipeline encodes at the input ROS message resolution/framerate.
+                     # To enforce output width/height/framerate from parsed_encoder_params,
+                     # we would need to insert and configure:
+                     # - videoscale: For resizing based on parsed_encoder_params['width']/['height']
+                     # - videorate: For changing framerate based on parsed_encoder_params['framerate']
+                     # - capsfilter: After scale/rate elements to enforce the desired output caps before the encoder.
+                     # Example structure: ... ! videoconvert ! videoscale ! videorate ! capsfilter ! x264enc ! ...
+                else:
+                    raise RuntimeError(f"Failed to create x264enc encoder for {self.stream_id}")
+            else:
+                # Placeholder for other codecs
+                raise NotImplementedError(f"Encoding format '{self.encoding_format}' is not supported yet.")
+
             self.appsink = Gst.ElementFactory.make("appsink", f"appsink_{self.stream_id}")
             if self.appsink:
                 self.appsink.set_property("max-buffers", 5) 

@@ -41,10 +41,11 @@ topic_mappings:
     message_type: "sensor_msgs/msg/Image"
     encoder_params:
       encoding_format: "video/h264"
-      bitrate: 2000
-      quality: 25
-      tune: "zerolatency"
-      profile: "baseline"
+      width: 640
+      height: 480
+      framerate: 30
+      bitrate: 2000 # kbps
+      gop_size: 60 # frames
     priority: "HIGH"
   
   - ros_topic: "/robot/depth_camera/image_raw"
@@ -52,10 +53,11 @@ topic_mappings:
     message_type: "sensor_msgs/msg/Image"
     encoder_params:
       encoding_format: "video/h264"
-      bitrate: 1000
-      quality: 30
-      tune: "zerolatency"
-      profile: "baseline"
+      width: 640
+      height: 480
+      framerate: 15 # Depth cams often lower FPS
+      bitrate: 1000 # kbps
+      gop_size: 30 # frames
     priority: "STANDARD"
 
 # Throttling settings per priority level (0 = no throttling)

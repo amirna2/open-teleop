@@ -194,31 +194,34 @@ class EncodedFrameSubscriber:
         request.output_ott_topic = stream_config['ott']
         
         # Set encoder parameters if provided
-        encoder_params = {}
         if 'encoder_params' in stream_config:
             try:
-                # Parse encoder_params JSON if it's a string
-                if isinstance(stream_config['encoder_params'], str):
-                    encoder_params = json.loads(stream_config['encoder_params'])
-                else:
-                    encoder_params = stream_config['encoder_params']
+                # Assuming config validation ensures encoder_params is a dict with required keys
+                encoder_params = stream_config['encoder_params']
                 
-                # Extract encoding_format from encoder_params
-                if 'encoding_format' in encoder_params:
-                    request.encoding_format = encoder_params['encoding_format']
-                else:
-                    request.encoding_format = 'video/h264'  # Default
-                    self.logger.warning("No encoding_format found in encoder_params, using default: video/h264")
+                # Directly set the dedicated encoding_format field (assuming it exists)
+                request.encoding_format = encoder_params['encoding_format']
                 
-                # Set the encoder_params as a JSON string
-                request.encoder_params = json.dumps(encoder_params)
+                # Create a dictionary for the JSON blob, excluding encoding_format
+                params_for_json = {
+                    k: v for k, v in encoder_params.items() 
+                    if k != 'encoding_format'
+                }
                 
-            except json.JSONDecodeError as e:
-                self.logger.error(f"Failed to parse encoder_params JSON: {e}")
-                return False, f"Invalid encoder_params JSON: {e}"
+                # Set the remaining encoder_params as a JSON string
+                request.encoder_params = json.dumps(params_for_json)
+                
+            except KeyError as e:
+                # This should ideally be caught by upstream validation
+                self.logger.error(f"Missing required key in encoder_params: {e}. Config validation failed?")
+                return False, f"Missing required encoder_params key: {e}"
+            except Exception as e: # Catch potential json.dumps errors, though unlikely
+                self.logger.error(f"Error processing encoder_params: {e}")
+                return False, f"Error processing encoder_params: {e}"
         else:
-            self.logger.warning("No encoder_params provided, using default encoding_format: video/h264")
-            request.encoding_format = 'video/h264'  # Default
+            # This case should also ideally be prevented by config validation
+            self.logger.error("Stream config is missing the required 'encoder_params' field.")
+            return False, "Missing required 'encoder_params' field"
         
         # Send the request
         self.logger.info(f"Sending ManageStream request: {request}")
