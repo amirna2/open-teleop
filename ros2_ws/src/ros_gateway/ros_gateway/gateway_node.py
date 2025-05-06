@@ -10,9 +10,8 @@ import yaml
 import json
 import time
 import argparse
-import asyncio # Keep asyncio import needed for the class method
-import threading # Might need for future handling, keep import
-from rclpy.executors import ExternalShutdownException # For cleaner shutdown
+import asyncio
+from rclpy.executors import ExternalShutdownException
 
 # Import custom logger
 import open_teleop_logger as log
@@ -23,8 +22,6 @@ from ros_gateway.zeromq_client.zmq_client import ZmqClient
 from ros_gateway.topic_subscriber.topic_manager import TopicManager
 from ros_gateway.message_converter.converter import MessageConverter
 from ros_gateway.topic_publisher.publisher import TopicPublisher
-# Defer AV import to where it's used to avoid potential init order issues
-# from ros_gateway.av_integration import EncodedFrameSubscriber
 
 def load_config_from_yaml(config_path, logger):
     """Load configuration from a YAML file."""
@@ -51,6 +48,7 @@ def load_config_from_yaml(config_path, logger):
 def get_config_value(env_var, config_dict, default_value):
     """Get config value with precedence: ENV > YAML > Default."""
     value = os.environ.get(env_var)
+
     if value is not None:
         return value
     if config_dict is not None:
@@ -157,10 +155,10 @@ class RosGateway(Node):
                 self.logger.debug(f"Inbound topic {i+1}: {mapping['ott']} -> {mapping['ros_topic']}")
 
         # Initialize the topic manager (pass initial config)
-        outbound_mappings = self.filter_topic_mappings_by_direction(self.config.get('topic_mappings', []), self.config.get('defaults', {}), 'OUTBOUND') # <-- Fix from previous step
+        outbound_mappings = self.filter_topic_mappings_by_direction(self.config.get('topic_mappings', []), self.config.get('defaults', {}), 'OUTBOUND')
         self.topic_manager = TopicManager(
             node=self,
-            topic_mappings=outbound_mappings, # Initial filtered mappings
+            topic_mappings=outbound_mappings,
             defaults=self.config.get('defaults', {}),
             message_converter=self.converter,
             zmq_client=self.zmq_client,
@@ -171,7 +169,7 @@ class RosGateway(Node):
         inbound_mappings = self.filter_topic_mappings_by_direction(self.config.get('topic_mappings', []), self.config.get('defaults', {}), 'INBOUND')
         self.topic_publisher = TopicPublisher(
             node=self,
-            topic_mappings=inbound_mappings, # Initial filtered mappings
+            topic_mappings=inbound_mappings,
             defaults=self.config.get('defaults', {}),
             message_converter=self.converter,
             zmq_client=self.zmq_client,
@@ -180,7 +178,7 @@ class RosGateway(Node):
         
         # Initialize AV subscriber attribute (will be created later)
         self.encoded_frame_subscriber = None 
-        self.av_init_task = None # To hold the reference to the running async task
+        self.av_init_task = None
         
         # Setup a timer for heartbeat/monitoring
         self.create_timer(1.0, self.heartbeat_callback)
@@ -193,7 +191,7 @@ class RosGateway(Node):
         self.init_timer = self.create_timer(0.1, self.schedule_av_initialization)
         
         self.logger.info('ROS Gateway components base initialized.')
-        self.logger.info('AV Initialization timer scheduled.') # New log
+        self.logger.info('AV Initialization timer scheduled.')
     
     def schedule_av_initialization(self):
         """
@@ -205,28 +203,16 @@ class RosGateway(Node):
             self.init_timer.cancel()
             self.init_timer = None
         else:
-            # Avoid re-scheduling if called again (e.g., during config update)
             self.logger.debug("AV initialization already scheduled or timer cancelled.")
             return
 
         # Ensure we have an executor associated with the node
         if self.executor is None:
             self.logger.error("Node executor not available, cannot schedule AV initialization!")
-            # This might happen if the node hasn't been added to an executor yet
-            # which is unlikely if this timer callback is firing.
-            # Try to get it implicitly? Risky.
-            # For now, just log the error.
             return
 
         self.logger.info("Scheduling async initialize_av_integration task...")
-        # Schedule the coroutine to run via the node's executor
-        # Note: Use self.executor which rclpy.spin() uses internally
-        # We store the task future to potentially check its status or cancel it later
         self.av_init_task = self.executor.create_task(self.initialize_av_integration())
-        # Alternatively, if create_task isn't directly available or suitable on the
-        # implicit executor used by rclpy.spin(), consider adding a future completion callback:
-        # future = self.executor.submit(self.initialize_av_integration) # Requires initialize_av_integration NOT to be async
-        # future.add_done_callback(self._handle_av_init_completion)
 
     def _configure_logging(self):
         """Configure the logger based on the bootstrap configuration file."""
@@ -239,7 +225,7 @@ class RosGateway(Node):
             else:
                 log_to_file = log_to_file.lower() in ['true', '1', 'yes']
                 
-            log_path = os.environ.get('TELEOP_LOG_PATH') or log_config.get('log_path', '/tmp/open_teleop_logs') # Default to /tmp if not set
+            log_path = os.environ.get('TELEOP_LOG_PATH') or log_config.get('log_path', '/tmp/open_teleop_logs')
             log_rotation = int(os.environ.get('TELEOP_LOG_ROTATION_DAYS') or log_config.get('log_rotation_days', 7))
 
             # Map string level to logging level constant
@@ -247,7 +233,7 @@ class RosGateway(Node):
 
             # Reconfigure the logger by getting a new instance with updated settings
             self.logger = log.get_logger(
-                name=self.logger.name, # Keep the original name
+                name=self.logger.name,
                 log_dir=log_path if log_to_file else None,
                 console_level=log_level,
                 file_level=log_level if log_to_file else None
@@ -259,9 +245,7 @@ class RosGateway(Node):
     
     def heartbeat_callback(self):
         """Periodic heartbeat to monitor system status"""
-        #self.logger.debug('Gateway heartbeat')
         x = 1
-        # Could add metrics reporting here
     
     def signal_handler(self, sig, frame):
         """Handle shutdown signals gracefully"""
@@ -435,9 +419,6 @@ class RosGateway(Node):
         # Ensure executor exists before trying to create task
         if self.executor:
             self.logger.info("Configuration updated, re-scheduling AV initialization task...")
-            # Cancel previous task if it's still running? Risky, could interrupt service calls.
-            # Let's schedule it again - the initialize_av_integration needs to be idempotent
-            # or handle being called multiple times.
             self.executor.create_task(self.initialize_av_integration())
         else:
             self.logger.error("Node executor not available, cannot re-schedule AV initialization on config update!")
@@ -483,14 +464,11 @@ class RosGateway(Node):
         
         # Import EncodedFrameSubscriber here to avoid circular imports
         try:
-            # The timer trigger in schedule_av_initialization should provide sufficient delay.
-            # Service availability is handled by wait_for_service in EncodedFrameSubscriber.
             self.logger.info("Proceeding with AV subscriber/client creation.")
             
             from ros_gateway.av_integration import EncodedFrameSubscriber
             
             # Create the encoded frame subscriber IF NOT ALREADY CREATED
-            # This method might be called multiple times (init + config update)
             if self.encoded_frame_subscriber is None:
                 self.logger.info("Creating new EncodedFrameSubscriber instance.")
                 self.encoded_frame_subscriber = EncodedFrameSubscriber(
@@ -500,8 +478,6 @@ class RosGateway(Node):
                 )
             else:
                  self.logger.info("EncodedFrameSubscriber already exists, reusing instance.")
-                 # TODO: Ideally, EncodedFrameSubscriber should handle config updates internally
-                 # For now, we rely on re-calling configure/enable below.
 
             # Check if the subscriber object was actually created (handles potential errors in its __init__)
             if self.encoded_frame_subscriber is None:
@@ -525,14 +501,9 @@ class RosGateway(Node):
             
             if not av_configs:
                 self.logger.info("No AV streams found in topic_mappings, skipping AV configuration/enabling")
-                # TODO: Should we disable/remove existing AV streams if config changes?
-                # Requires more complex state management in EncodedFrameSubscriber
                 return
                 
             self.logger.info(f"Found {len(av_configs)} AV streams in current config")
-            
-            # TODO: Diff current streams vs new streams for more granular updates
-            # For now, just re-configure and re-enable all found streams
             
             # Configure each stream
             stream_ids = []
@@ -558,17 +529,15 @@ class RosGateway(Node):
             
         except ImportError as e:
             self.logger.error(f"Failed to import required modules for AV integration: {e}")
-            # Don't raise, just log the error and potentially disable AV features
         except Exception as e:
             self.logger.error(f"Error initializing AV integration: {e}")
             import traceback
             self.logger.error(traceback.format_exc())
-            # Don't raise, allow gateway to continue without AV
 
 def main(args=None):
     rclpy.init(args=args)
-    gateway_node = None # Initialize to prevent potential UnboundLocalError
-    executor = None # Define executor in main scope
+    gateway_node = None
+    executor = None
     
     parser = argparse.ArgumentParser(description='ROS Gateway for Open-Teleop')
     parser.add_argument('--config-path', type=str, required=True, 

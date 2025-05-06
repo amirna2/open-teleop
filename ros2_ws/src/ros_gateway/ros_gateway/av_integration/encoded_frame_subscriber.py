@@ -9,7 +9,7 @@ from open_teleop_msgs.msg import EncodedFrame
 from open_teleop_msgs.srv import ManageStream, GetStatus
 
 # Import the generated FlatBuffer code
-from ros_gateway.flatbuffers.open_teleop.message import ContentType, OttMessage # Import class and enum
+from ros_gateway.flatbuffers.open_teleop.message import ContentType, OttMessage
 # Import builder functions DIRECTLY from the OttMessage module file
 from ros_gateway.flatbuffers.open_teleop.message.OttMessage import (
     OttMessageStart,
@@ -51,8 +51,8 @@ class EncodedFrameSubscriber:
         
         # Create service clients
         self.logger.info("Creating service clients for AV node...")
-        self.manage_stream_client = None # Initialize to None
-        self.get_status_client = None # Initialize to None
+        self.manage_stream_client = None
+        self.get_status_client = None
         
         # Try ManageStream client
         self.logger.info("Attempting to create ManageStream client for service '/open_teleop_av_node/manage_stream'...")
@@ -75,9 +75,9 @@ class EncodedFrameSubscriber:
              self.logger.error(f"!!! Exception during ManageStream client creation/wait: {e}")
              import traceback
              self.logger.error(traceback.format_exc())
-             self.manage_stream_client = None # Ensure it's None on failure
+             self.manage_stream_client = None
         
-        # Try GetStatus client (less critical for startup)
+        # Try GetStatus client
         self.logger.info("Attempting to create GetStatus client for service '/open_teleop_av_node/get_status'...")
         try:
             self.get_status_client = self.node.create_client(
@@ -88,11 +88,6 @@ class EncodedFrameSubscriber:
                  self.logger.error("!!! node.create_client returned None for GetStatus!")
             else:
                 self.logger.info("GetStatus client object created successfully.")
-                # Optional: Add a short wait here if needed, but less critical for init
-                # if not self.get_status_client.wait_for_service(timeout_sec=2.0):
-                #     self.logger.warning("GetStatus service wait timed out (non-critical).")
-                # else:
-                #     self.logger.info("GetStatus service is available.")
         except Exception as e:
              self.logger.error(f"!!! Exception during GetStatus client creation: {e}")
              self.get_status_client = None
@@ -100,8 +95,6 @@ class EncodedFrameSubscriber:
         # Check if the critical client was created successfully before proceeding
         if self.manage_stream_client is None:
              self.logger.error("ManageStream client was not created successfully. AV stream configuration will likely fail.")
-             # Depending on requirements, you might want to raise an error here
-             # raise RuntimeError("Failed to create critical ManageStream service client")
             
         self.streams = {}  # To track configured streams
         self.logger.info("EncodedFrameSubscriber initialized (client creation attempted).")
@@ -119,7 +112,7 @@ class EncodedFrameSubscriber:
             # Get current timestamp in nanoseconds
             timestamp_ns = self.node.get_clock().now().nanoseconds
             
-            # Create FlatBuffer message
+            # Create OTT FlatBuffer message
             builder = flatbuffers.Builder(1024 + len(msg.data))  # Pre-allocate enough space for the data
             
             # Create the OTT topic string
@@ -135,14 +128,6 @@ class EncodedFrameSubscriber:
             OttMessageAddContentType(builder, ContentType.ENCODED_VIDEO_FRAME)
             OttMessageAddOtt(builder, ott_fb)
             OttMessageAddTimestampNs(builder, timestamp_ns)
-            
-            # NOTE: Media-specific fields are not part of the current OttMessage schema
-            # If added to schema later, uncomment and ensure direct function call style:
-            # media_format_fb = builder.CreateString(msg.encoding_format)
-            # OttMessageAddMediaFormat(builder, media_format_fb)
-            # OttMessageAddFrameType(builder, msg.frame_type)
-            # OttMessageAddWidth(builder, msg.width)
-            # OttMessageAddHeight(builder, msg.height)
             
             # Finish the message
             message = OttMessageEnd(builder)
@@ -207,10 +192,9 @@ class EncodedFrameSubscriber:
         # Set encoder parameters if provided
         if 'encoder_params' in stream_config:
             try:
-                # Assuming config validation ensures encoder_params is a dict with required keys
                 encoder_params = stream_config['encoder_params']
                 
-                # Directly set the dedicated encoding_format field (assuming it exists)
+                # Directly set the dedicated encoding_format field
                 request.encoding_format = encoder_params['encoding_format']
                 
                 # Create a dictionary for the JSON blob, excluding encoding_format
@@ -223,14 +207,12 @@ class EncodedFrameSubscriber:
                 request.encoder_params = json.dumps(params_for_json)
                 
             except KeyError as e:
-                # This should ideally be caught by upstream validation
                 self.logger.error(f"Missing required key in encoder_params: {e}. Config validation failed?")
                 return False, f"Missing required encoder_params key: {e}"
-            except Exception as e: # Catch potential json.dumps errors, though unlikely
+            except Exception as e:
                 self.logger.error(f"Error processing encoder_params: {e}")
                 return False, f"Error processing encoder_params: {e}"
         else:
-            # This case should also ideally be prevented by config validation
             self.logger.error("Stream config is missing the required 'encoder_params' field.")
             return False, "Missing required 'encoder_params' field"
         
