@@ -266,32 +266,38 @@ class RosGateway(Node):
     def signal_handler(self, sig, frame):
         """Handle shutdown signals gracefully"""
         self.logger.info(f'Received signal {sig}, shutting down...')
-        # The shutdown logic will be handled by the finally block in main
-        # when using an explicit executor. We just need to trigger the shutdown.
-        # If using rclpy.spin(), this might need to call self.shutdown() directly.
-        # For now, assume the executor handles graceful exit.
-        pass # Let the executor handle shutdown via KeyboardInterrupt/ExternalShutdownException
+        # Let rclpy's shutdown handling take over
+        rclpy.shutdown()
 
     def shutdown(self):
-        """Clean shutdown of all resources (called from main's finally block)."""
+        """Clean shutdown of all resources."""
         self.logger.info('Shutting down ROS Gateway components...')
+        
+        # Simple AV component shutdown
+        if hasattr(self, 'encoded_frame_subscriber') and self.encoded_frame_subscriber:
+            try:
+                self.logger.info("Shutting down EncodedFrameSubscriber...")
+                self.encoded_frame_subscriber.shutdown()
+            except Exception as e:
+                self.logger.error(f"Error shutting down EncodedFrameSubscriber: {e}")
+        
+        # Shut down other components
         if hasattr(self, 'topic_manager'):
             self.topic_manager.shutdown()
         if hasattr(self, 'zmq_client'):
             self.zmq_client.shutdown()
         if hasattr(self, 'topic_publisher'):
             self.topic_publisher.shutdown()
-        if hasattr(self, 'encoded_frame_subscriber') and self.encoded_frame_subscriber:
-            self.encoded_frame_subscriber.shutdown()
-        # Cancel init timer if it's still active during shutdown
+        
+        # Cancel init timer if it's still active
         if hasattr(self, 'init_timer') and self.init_timer and not self.init_timer.cancelled():
             self.init_timer.cancel()
             self.logger.debug("Cancelled AV init timer during shutdown.")
-        # Cancel the async task if it's still running?
+        
+        # Cancel the async task if it's still running
         if hasattr(self, 'av_init_task') and self.av_init_task and not self.av_init_task.done():
-             self.logger.info("Cancelling potentially running AV initialization task...")
-             self.av_init_task.cancel()
-             # TODO: Optionally await cancellation if needed, though risky during shutdown
+            self.logger.info("Cancelling AV initialization task...")
+            self.av_init_task.cancel()
 
         self.logger.info('Component shutdown complete.')
     
@@ -589,7 +595,9 @@ def main(args=None):
             
     except (KeyboardInterrupt, ExternalShutdownException):
         if gateway_node:
-             gateway_node.logger.info("Shutdown signal received.")
+            gateway_node.logger.info("Shutdown signal received.")
+        else:
+            print("Shutdown signal received before node was fully initialized.")
     except Exception as e:
         # Log fatal error before exiting
         if gateway_node:
@@ -604,23 +612,16 @@ def main(args=None):
             temp_logger.fatal(traceback.format_exc())
             
     finally:
-        # Shutdown sequence
+        # Clean shutdown
         if gateway_node:
-            gateway_node.logger.info("Destroying node...")
-            # Call the node's explicit shutdown method first
+            gateway_node.logger.info("Shutting down gateway node...")
             gateway_node.shutdown()
-            # Important: Destroy node BEFORE shutting down executor
+            gateway_node.logger.info("Destroying node...")
             gateway_node.destroy_node()
             gateway_node.logger.info("Node destroyed.")
-            
         if executor:
-             executor.shutdown()
-             print("Executor shutdown complete.") # Use print as logger might be gone
-             
-        # rclpy shutdown happens automatically if using context manager,
-        # but call explicitly otherwise if needed.
-        # if rclpy.ok():
-        #     rclpy.shutdown()
+            executor.shutdown()
+            print("Executor shutdown complete.")
         print("ROS Gateway process finished.")
 
 

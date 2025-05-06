@@ -394,7 +394,72 @@ class EncodedFrameSubscriber:
             return None
     
     def shutdown(self):
-        """Clean up resources."""
+        """Clean up resources and disable active streams."""
+        self.logger.info("Shutting down EncodedFrameSubscriber...")
+        
+        # Perform synchronous removal of active streams
+        if hasattr(self, 'streams') and self.streams and self.manage_stream_client:
+            stream_ids = list(self.streams.keys())
+            self.logger.info(f"Removing {len(stream_ids)} active AV streams during shutdown: {stream_ids}")
+            
+            for stream_id in stream_ids:
+                try:
+                    # Create and send a synchronous REMOVE request
+                    request = ManageStream.Request()
+                    request.action = ManageStream.Request.ACTION_REMOVE
+                    request.stream_id = stream_id
+                    
+                    # Use synchronous call with short timeout
+                    self.logger.info(f"Sending synchronous REMOVE request for stream: {stream_id}")
+                    future = self.manage_stream_client.call_async(request)
+                    
+                    # Wait with timeout
+                    if hasattr(self.node, 'executor') and self.node.executor:
+                        try:
+                            # Spin until future completes or timeout (max 0.5 seconds per stream)
+                            spin_count = 0
+                            max_spins = 10  # ~0.5 seconds with 0.05s per spin
+                            while not future.done() and spin_count < max_spins:
+                                self.node.executor.spin_once(timeout_sec=0.05)
+                                spin_count += 1
+                            
+                            if future.done():
+                                result = future.result()
+                                if result.success:
+                                    self.logger.info(f"Successfully removed stream {stream_id} during shutdown")
+                                else:
+                                    self.logger.warning(f"AV node reported error removing stream {stream_id}: {result.message}")
+                            else:
+                                self.logger.warning(f"Timeout waiting for stream {stream_id} removal response")
+                        except Exception as e:
+                            self.logger.warning(f"Error spinning executor for stream {stream_id} removal: {e}")
+                except Exception as e:
+                    self.logger.warning(f"Error removing stream {stream_id} during shutdown: {e}")
+            
+            # Clear the streams dictionary regardless of success
+            self.streams.clear()
+        
+        # Clean up ROS resources
         if hasattr(self, 'encoded_frame_subscription'):
-            self.node.destroy_subscription(self.encoded_frame_subscription)
+            try:
+                self.node.destroy_subscription(self.encoded_frame_subscription)
+                self.logger.info("Destroyed encoded frame subscription")
+            except Exception as e:
+                self.logger.warning(f"Error destroying subscription: {e}")
+        
+        # Clean up service clients
+        if hasattr(self, 'manage_stream_client') and self.manage_stream_client:
+            try:
+                self.manage_stream_client.destroy()
+                self.logger.info("Destroyed manage stream client")
+            except Exception as e:
+                self.logger.warning(f"Error destroying manage stream client: {e}")
+        
+        if hasattr(self, 'get_status_client') and self.get_status_client:
+            try:
+                self.get_status_client.destroy()
+                self.logger.info("Destroyed get status client")
+            except Exception as e:
+                self.logger.warning(f"Error destroying get status client: {e}")
+        
         self.logger.info("EncodedFrameSubscriber shutdown complete") 
