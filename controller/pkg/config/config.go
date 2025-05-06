@@ -45,6 +45,7 @@ type ServerConfig struct {
 
 // TopicMapping represents a mapping between ROS topics and Open-Teleop topics
 type TopicMapping struct {
+	TopicID       string                 `yaml:"topic_id" json:"topic_id"`
 	RosTopic      string                 `yaml:"ros_topic" json:"ros_topic"`
 	OttTopic      string                 `yaml:"ott" json:"ott"`
 	MessageType   string                 `yaml:"message_type" json:"message_type"`

@@ -648,14 +648,21 @@ class OpenTeleopAvNode(Node):
 
     def _handle_add_stream(self, request, response):
         """Handle ACTION_ADD request."""
+        # Use the stream_id provided by the gateway (originating from config's topic_id)
         stream_id = request.stream_id
+        
+        # Stream ID must now be provided by the gateway based on config topic_id
         if not stream_id:
-            stream_id = str(uuid.uuid4()) # Generate ID if not provided
-            self.logger.info(f"No stream_id provided, generated: {stream_id}")
+            response.success = False
+            response.message = "ACTION_ADD request missing mandatory stream_id (must be topic_id)."
+            self.logger.error(response.message)
+            return response
 
+        # Check if this stream_id already exists
         if stream_id in self.pipelines:
             response.success = False
-            response.message = f"Stream ID {stream_id} already exists."
+            # Log more clearly that it's a duplicate based on ID
+            response.message = f"Stream ID '{stream_id}' already exists. Cannot add duplicate."
             self.logger.error(response.message)
             return response
 

@@ -185,9 +185,20 @@ class EncodedFrameSubscriber:
         request = ManageStream.Request()
         request.action = ManageStream.Request.ACTION_ADD
         
-        # Stream ID (optional, will be generated if not provided)
-        if 'stream_id' in stream_config:
-            request.stream_id = stream_config['stream_id']
+        # Topic ID (previously stream_id) is mandatory in config for AV streams
+        try:
+            # Use 'topic_id' from the config mapping
+            topic_id = stream_config['topic_id'] 
+            if not topic_id: # Basic check for empty string
+                raise ValueError("topic_id cannot be empty")
+            # Assign it to the service request's stream_id field
+            request.stream_id = topic_id 
+        except KeyError:
+            self.logger.error(f"AV Stream config missing mandatory 'topic_id': {stream_config}")
+            return False, "Missing mandatory 'topic_id' in configuration"
+        except ValueError as e:
+             self.logger.error(f"Invalid 'topic_id' in AV stream config: {e}. Config: {stream_config}")
+             return False, f"Invalid topic_id: {e}"
         
         # Set required fields
         request.input_ros_topic = stream_config['ros_topic']

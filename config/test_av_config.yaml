@@ -14,11 +14,13 @@ defaults:
 topic_mappings:
   - ros_topic: "/robot/battery_state"
     ott: "teleop.sensor.battery_state"
+    topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0001"
     message_type: "sensor_msgs/msg/BatteryState"
     priority: "LOW"
   
   - ros_topic: "/string"
     ott: "teleop.status"
+    topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0002"
     priority: "STANDARD"
     message_type: "std_msgs/msg/String"
     direction: "OUTBOUND"
@@ -26,11 +28,13 @@ topic_mappings:
 
   - ros_topic: "/robot/odom"
     ott: "teleop.sensor.odometry"
+    topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0003"
     message_type: "nav_msgs/msg/Odometry"
     priority: "STANDARD"
   
   - ros_topic: "/robot/cmd_vel"
     ott: "teleop.control.cmd_vel"
+    topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0004"
     message_type: "geometry_msgs/msg/Twist"
     direction: "INBOUND"
     priority: "HIGH"
@@ -38,6 +42,7 @@ topic_mappings:
   # AV stream configurations
   - ros_topic: "/test/image_prog"
     ott: "teleop.video.main_camera"
+    topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0005"
     message_type: "sensor_msgs/msg/Image"
     encoder_params:
       encoding_format: "video/h264"
@@ -46,10 +51,12 @@ topic_mappings:
       framerate: 30
       bitrate: 2000 # kbps
       gop_size: 60 # frames
+    direction: "OUTBOUND"
     priority: "HIGH"
   
   - ros_topic: "/robot/depth_camera/image_raw"
     ott: "teleop.video.depth_camera"
+    topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0006"
     message_type: "sensor_msgs/msg/Image"
     encoder_params:
       encoding_format: "video/h264"
@@ -58,6 +65,7 @@ topic_mappings:
       framerate: 15 # Depth cams often lower FPS
       bitrate: 1000 # kbps
       gop_size: 30 # frames
+    direction: "OUTBOUND"
     priority: "STANDARD"
 
 # Throttling settings per priority level (0 = no throttling)

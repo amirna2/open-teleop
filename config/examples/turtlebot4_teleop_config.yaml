@@ -9,6 +9,7 @@ topic_mappings:
   # Sensor data (OUTBOUND - from ROS to controller)
   - ros_topic: "/battery_state"
     ott: "teleop.sensor.battery"
+    topic_id: "e0000001-1111-2222-3333-d701748f0001"
     priority: "STANDARD"
     message_type: "sensor_msgs/msg/BatteryState"
     direction: "OUTBOUND"
@@ -66,6 +67,7 @@ topic_mappings:
   # Robot control (INBOUND - from controller to ROS)
   - ros_topic: "/cmd_vel"
     ott: "teleop.control.velocity"
+    topic_id: "e0000001-1111-2222-3333-d701748f0002"
     priority: "HIGH"
     message_type: "geometry_msgs/msg/TwistStamped"
     direction: "INBOUND"
