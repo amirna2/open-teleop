@@ -84,3 +84,54 @@ func ControlWebSocketHandler(conn *websocket.Conn, logger customlog.Logger, mess
 	}
 	logger.Infof("Control WebSocket disconnected: %s", conn.RemoteAddr())
 }
+
+// VideoWebSocketHandler handles WebSocket connections for video streaming.
+// It registers the connection with VideoService and keeps it open to receive video frames.
+// It also has access to the topic registry for metadata lookup.
+func VideoWebSocketHandler(conn *websocket.Conn, logger customlog.Logger, messageDirector *processing.MessageDirector, topicRegistry *processing.TopicRegistry) {
+	logger.Infof("Video WebSocket connected: %s", conn.RemoteAddr())
+
+	// Get VideoService from MessageDirector
+	videoService := messageDirector.GetVideoService()
+	if videoService == nil {
+		logger.Errorf("VideoService not available")
+		conn.Close()
+		return
+	}
+
+	// Register client with VideoService
+	videoService.RegisterWebSocketClient(conn)
+
+	// Keep connection open and handle disconnection
+	var (
+		mt  int
+		msg []byte
+		err error
+	)
+
+	// Simple loop to keep connection alive and detect disconnection
+	for {
+		if mt, msg, err = conn.ReadMessage(); err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				logger.Errorf("Video WS read error: %v", err)
+			} else {
+				// Don't log normal closures as errors
+				if err != websocket.ErrCloseSent && !errors.Is(err, syscall.EPIPE) && !errors.Is(err, syscall.ECONNRESET) {
+					logger.Infof("Video WS connection closed: %v", err)
+				} else {
+					logger.Infof("Video WS connection closed normally.")
+				}
+			}
+			break // Exit loop on error/close
+		}
+
+		// Ignore any messages from client - this is a one-way stream
+		if len(msg) > 0 {
+			logger.Debugf("Ignoring message from video client: %d bytes (type: %d)", len(msg), mt)
+		}
+	}
+
+	// Unregister client when disconnected
+	videoService.UnregisterWebSocketClient(conn)
+	logger.Infof("Video WebSocket disconnected: %s", conn.RemoteAddr())
+}

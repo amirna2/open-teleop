@@ -33,6 +33,8 @@ import (
 	"github.com/open-teleop/controller/pkg/api"
 	// Import our new services package
 	"github.com/open-teleop/controller/services"
+	// Import our video service
+	"github.com/open-teleop/controller/domain/video"
 )
 
 // --- Global Variables for Flags (Best Practice) ---
@@ -311,6 +313,10 @@ func setupProcessingComponents(cfg *config.Config, logger customlog.Logger, zmqS
 	resultHandler := processing.NewLoggingResultHandler(logger, zmqService)
 	logger.Infof("Result Handler created.")
 
+	logger.Infof("Creating Video Service")
+	videoService := video.NewVideoService(logger)
+	logger.Infof("Video Service created.")
+
 	logger.Infof("Initializing Message Director")
 	directorOptions := &processing.DirectorOptions{
 		DefaultQueueSize: 1000, // TODO: Consider making this configurable (perhaps via bootstrap?)
@@ -323,7 +329,9 @@ func setupProcessingComponents(cfg *config.Config, logger customlog.Logger, zmqS
 	)
 	messageDirector.SetProcessor(rosProcessor.CreateProcessorFunc())
 	messageDirector.SetResultHandler(resultHandler.CreateHandlerFunc())
+	messageDirector.SetVideoService(videoService)
 	zmqService.SetMessageDirector(messageDirector)
+	zmqService.GetDispatcher().(*zeromq.MessageDispatcher).SetVideoService(videoService)
 	messageDirector.Start()
 	logger.Infof("Message Director initialized and started.")
 
@@ -383,7 +391,7 @@ func setupHTTPServer(cfg *config.Config, teleopConfigService services.TeleopConf
 	// New Teleop Config API Routes (using service for live data)
 	api.RegisterConfigRoutes(app, teleopConfigService, logger)
 
-	// WebSocket Route
+	// WebSocket Route (middleware for /ws)
 	app.Use("/ws", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
 			c.Locals("allowed", true)
@@ -392,9 +400,15 @@ func setupHTTPServer(cfg *config.Config, teleopConfigService services.TeleopConf
 		logger.Warnf("Non-websocket request to /ws endpoint from %s", c.IP())
 		return fiber.ErrUpgradeRequired
 	})
+
+	// Control WebSocket endpoint
 	app.Get("/ws/control", websocket.New(func(conn *websocket.Conn) {
-		// Note: TopicRegistry passed here uses the config loaded at startup
 		api.ControlWebSocketHandler(conn, logger, messageDirector, topicRegistry)
+	}))
+
+	// Video WebSocket endpoint
+	app.Get("/ws/video", websocket.New(func(conn *websocket.Conn) {
+		api.VideoWebSocketHandler(conn, logger, messageDirector, topicRegistry)
 	}))
 
 	logger.Infof("HTTP Server setup complete.")

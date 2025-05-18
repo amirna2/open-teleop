@@ -1,44 +1,62 @@
 package video
 
 import (
-	"github.com/gofiber/fiber/v2"
-	// "github.com/open-teleop/controller/pkg/webrtc"
+	"sync"
+
+	"github.com/gofiber/contrib/websocket"
+	customlog "github.com/open-teleop/controller/pkg/log"
 )
 
 // VideoService handles video streaming from robots
+// Now manages WebSocket clients for video streaming
+// Future: can be extended for WebRTC, etc.
 type VideoService struct {
-	// webrtcManager *webrtc.Manager
+	mu      sync.Mutex
+	clients map[*websocket.Conn]struct{}
+	logger  customlog.Logger
 }
 
 // NewVideoService creates a new video service instance
-func NewVideoService() *VideoService {
+func NewVideoService(logger customlog.Logger) *VideoService {
 	return &VideoService{
-		// webrtcManager: webrtc.NewManager(),
+		clients: make(map[*websocket.Conn]struct{}),
+		logger:  logger,
 	}
 }
 
-// StreamHandler handles WebRTC stream requests
-func (s *VideoService) StreamHandler(c *fiber.Ctx) error {
-	// TODO: Implement WebRTC stream handling
-	return c.JSON(fiber.Map{
-		"status": "video streaming endpoint placeholder",
-	})
+// RegisterWebSocketClient adds a new WebSocket client for video streaming
+func (s *VideoService) RegisterWebSocketClient(conn *websocket.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clients[conn] = struct{}{}
+	s.logger.Infof("Video WS client connected: %s (total: %d)", conn.RemoteAddr(), len(s.clients))
 }
 
-// StartStream initializes a video stream from a robot
-func (s *VideoService) StartStream(robotID string) error {
-	// TODO: Implement stream initialization
-	return nil
+// UnregisterWebSocketClient removes a WebSocket client
+func (s *VideoService) UnregisterWebSocketClient(conn *websocket.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.clients, conn)
+	s.logger.Infof("Video WS client disconnected: %s (total: %d)", conn.RemoteAddr(), len(s.clients))
 }
 
-// StopStream stops a video stream
-func (s *VideoService) StopStream(streamID string) error {
-	// TODO: Implement stream termination
-	return nil
+// BroadcastVideoFrame sends a video frame to all connected WebSocket clients
+func (s *VideoService) BroadcastVideoFrame(topic string, timestamp int64, frame []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for conn := range s.clients {
+		if err := conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+			s.logger.Warnf("Failed to send video frame to %s: %v. Removing client.", conn.RemoteAddr(), err)
+			conn.Close()
+			delete(s.clients, conn)
+		}
+	}
+	s.logger.Debugf("Broadcasted video frame (%d bytes) to %d clients (topic: %s, timestamp: %d)", len(frame), len(s.clients), topic, timestamp)
 }
 
-// GetActiveStreams returns all active video streams
-func (s *VideoService) GetActiveStreams() []string {
-	// TODO: Implement active stream listing
-	return []string{}
-} 
+// GetClientCount returns the number of currently connected clients
+func (s *VideoService) GetClientCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.clients)
+}

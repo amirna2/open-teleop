@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/open-teleop/controller/domain/video"
 	"github.com/open-teleop/controller/pkg/config"
 	message "github.com/open-teleop/controller/pkg/flatbuffers/open_teleop/message"
 	customlog "github.com/open-teleop/controller/pkg/log"
@@ -39,7 +40,8 @@ type MessageDirector struct {
 	processor        MessageProcessor
 	resultHandler    ResultHandler
 	running          bool
-	mu               sync.Mutex
+	mu               sync.RWMutex
+	videoService     *video.VideoService
 
 	// Default settings
 	defaultQueueSize int
@@ -69,7 +71,7 @@ func NewMessageDirector(
 		topicRegistry:    topicRegistry,
 		defaultQueueSize: options.DefaultQueueSize,
 		running:          false,
-		mu:               sync.Mutex{},
+		mu:               sync.RWMutex{},
 	}
 }
 
@@ -146,6 +148,20 @@ func (d *MessageDirector) SetResultHandler(handler ResultHandler) {
 	}
 }
 
+// SetVideoService sets the VideoService for the director
+func (d *MessageDirector) SetVideoService(service *video.VideoService) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.videoService = service
+}
+
+// GetVideoService gets the VideoService from the director
+func (d *MessageDirector) GetVideoService() *video.VideoService {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.videoService
+}
+
 // RouteMessage routes a message to the appropriate processing pool based on its priority
 func (d *MessageDirector) RouteMessage(ottMsg *message.OttMessage) error {
 	d.mu.Lock()
@@ -158,20 +174,29 @@ func (d *MessageDirector) RouteMessage(ottMsg *message.OttMessage) error {
 
 	topic := string(ottMsg.Ott())
 
-	// Get topic priority from registry
+	// Step 1: Get topic priority from registry.
+	// TODO: This is unnecessarily complex. We should assume all messages have a priority.
+	// I believe we currently allow a topic_mapping to have no priority and then use the config default.
+	// It's better to be explicit and require a priority for all topics.
 	priority, exists := d.topicRegistry.GetTopicPriority(topic)
 	if !exists {
-		d.logger.Warnf("No priority found for topic '%s', using STANDARD", topic)
-		priority = PriorityStandard
+		// For video frames, always use HIGH priority
+		if ottMsg.ContentType() == message.ContentTypeENCODED_VIDEO_FRAME {
+			priority = PriorityHigh
+			d.logger.Debugf("Setting HIGH priority for ENCODED_VIDEO_FRAME message (topic: %s)", topic)
+		} else {
+			d.logger.Warnf("No priority found for topic '%s', using STANDARD", topic)
+			priority = PriorityStandard
+		}
 
-		// Register the topic with standard priority
+		// Register the topic with determined priority
 		d.topicRegistry.UpdateTopicStats(topic, ottMsg.TimestampNs())
 	} else {
 		// Update stats
 		d.topicRegistry.UpdateTopicStats(topic, ottMsg.TimestampNs())
 	}
 
-	// Route to appropriate pool
+	// Step 2: Route to appropriate pool
 	var successful bool
 	switch priority {
 	case PriorityHigh:

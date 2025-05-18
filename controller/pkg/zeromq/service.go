@@ -9,6 +9,7 @@ import (
 	"time"
 
 	// Assuming flatbuffer Go runtime is imported
+	"github.com/open-teleop/controller/domain/video"
 	"github.com/open-teleop/controller/pkg/config"
 	message "github.com/open-teleop/controller/pkg/flatbuffers/open_teleop/message"
 	customlog "github.com/open-teleop/controller/pkg/log"
@@ -315,6 +316,7 @@ type MessageDispatcher struct {
 	mu              sync.RWMutex
 	topicProcessors map[string]func(*message.OttMessage, []byte) ([]byte, error)
 	messageDirector *processing.MessageDirector
+	videoService    *video.VideoService
 }
 
 // NewMessageDispatcher creates a new message dispatcher
@@ -399,6 +401,55 @@ func (d *MessageDispatcher) handleRawFlatbuffer(data []byte) ([]byte, error) {
 		version,
 	)
 
+	// --- NEW: Handle ENCODED_VIDEO_FRAME ---
+	if contentType == message.ContentTypeENCODED_VIDEO_FRAME {
+		d.logger.Infof(
+			"Received ENCODED_VIDEO_FRAME: topic=%s, timestamp=%d, payload_size=%d bytes",
+			ottTopic, timestampNs, len(payloadBytes),
+		)
+
+		// Forward the frame to VideoService if available
+		d.mu.RLock()
+		videoSvc := d.videoService
+		d.mu.RUnlock()
+
+		if videoSvc != nil {
+			// Send the entire Flatbuffer to connected clients
+			videoSvc.BroadcastVideoFrame(ottTopic, timestampNs, data)
+			d.logger.Debugf("Forwarded video frame to VideoService for broadcast")
+
+			// Count connected clients
+			clientCount := videoSvc.GetClientCount()
+			if clientCount > 0 {
+				d.logger.Debugf("Video frame broadcast to %d connected clients", clientCount)
+			} else {
+				d.logger.Debugf("No clients connected to receive video frames")
+			}
+		} else {
+			d.logger.Warnf("VideoService not available, cannot broadcast video frame")
+		}
+
+		// For now, just ACK and do not route to ROS parser or topic processor
+		ackResponse := ZeroMQMessage{
+			Type:      "ACK",
+			Timestamp: float64(time.Now().Unix()),
+			Data: map[string]interface{}{
+				"status":  "OK",
+				"topic":   ottTopic,
+				"message": "ENCODED_VIDEO_FRAME received and processed",
+			},
+		}
+
+		responseData, err := json.Marshal(ackResponse)
+		if err != nil {
+			d.logger.Errorf("Error serializing ACK response for ENCODED_VIDEO_FRAME topic %s: %v", ottTopic, err)
+			return nil, fmt.Errorf("failed to serialize ACK response: %w", err)
+		}
+		return responseData, nil
+	}
+	// --- END NEW ---
+
+	// Existing logic for other content types
 	d.mu.RLock()
 	director := d.messageDirector
 	d.mu.RUnlock()
@@ -494,6 +545,13 @@ func (d *MessageDispatcher) SetMessageDirector(director *processing.MessageDirec
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.messageDirector = director
+}
+
+// SetVideoService sets the VideoService for the dispatcher
+func (d *MessageDispatcher) SetVideoService(service *video.VideoService) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.videoService = service
 }
 
 // ZeroMQService coordinates ZeroMQ communications for the controller
@@ -648,6 +706,11 @@ func (s *ZeroMQService) PublishJSON(topic string, messageType string, data inter
 	}
 
 	return s.PublishMessage(topic, msgData)
+}
+
+// GetDispatcher returns the MessageDispatcher
+func (s *ZeroMQService) GetDispatcher() interface{} {
+	return s.dispatcher
 }
 
 // SetMessageDirector sets the message director for processing incoming messages

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/open-teleop/controller/domain/video"
 	message "github.com/open-teleop/controller/pkg/flatbuffers/open_teleop/message"
 	customlog "github.com/open-teleop/controller/pkg/log"
 	"github.com/open-teleop/controller/pkg/rosparser"
@@ -145,5 +146,19 @@ func (p *RosMessageProcessor) ProcessImageMessage(
 func (p *RosMessageProcessor) CreateProcessorFunc() MessageProcessor {
 	return func(ottMsg *message.OttMessage) (map[string]interface{}, error) {
 		return p.ProcessMessage(ottMsg)
+	}
+}
+
+func NewHighPriorityProcessor(videoService *video.VideoService, rosProcessor *RosMessageProcessor) MessageProcessor {
+	return func(ottMsg *message.OttMessage) (map[string]interface{}, error) {
+		if ottMsg.ContentType() == message.ContentTypeENCODED_VIDEO_FRAME {
+			topic := string(ottMsg.Ott())
+			timestamp := ottMsg.TimestampNs()
+			payload := ottMsg.PayloadBytes()
+			videoService.BroadcastVideoFrame(topic, timestamp, payload)
+			return map[string]interface{}{"status": "video_frame_broadcast"}, nil
+		}
+		// Else, process as ROS2 message
+		return rosProcessor.ProcessMessage(ottMsg)
 	}
 }
