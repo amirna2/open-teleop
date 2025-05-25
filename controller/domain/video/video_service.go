@@ -41,17 +41,20 @@ func (s *VideoService) UnregisterWebSocketClient(conn *websocket.Conn) {
 }
 
 // BroadcastVideoFrame sends a video frame to all connected WebSocket clients
-func (s *VideoService) BroadcastVideoFrame(topic string, timestamp int64, frame []byte) {
+// Fast relay: sends the entire FlatBuffer message as-is to maintain performance
+func (s *VideoService) BroadcastVideoFrame(topic string, timestamp int64, messageData []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Fast relay: send the entire FlatBuffer message as-is
 	for conn := range s.clients {
-		if err := conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+		if err := conn.WriteMessage(websocket.BinaryMessage, messageData); err != nil {
 			s.logger.Warnf("Failed to send video frame to %s: %v. Removing client.", conn.RemoteAddr(), err)
 			conn.Close()
 			delete(s.clients, conn)
 		}
 	}
-	s.logger.Infof("Broadcasted video frame (%d bytes) to %d clients (topic: %s, timestamp: %d)", len(frame), len(s.clients), topic, timestamp)
+	s.logger.Infof("Broadcasted video frame (%d bytes) to %d clients (topic: %s, timestamp: %d)", len(messageData), len(s.clients), topic, timestamp)
 }
 
 // GetClientCount returns the number of currently connected clients

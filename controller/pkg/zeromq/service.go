@@ -401,12 +401,28 @@ func (d *MessageDispatcher) handleRawFlatbuffer(data []byte) ([]byte, error) {
 		version,
 	)
 
-	// --- NEW: Handle ENCODED_VIDEO_FRAME ---
+	// --- NEW: Handle ENCODED_VIDEO_FRAME messages ---
 	if contentType == message.ContentTypeENCODED_VIDEO_FRAME {
-		d.logger.Infof(
-			"Received ENCODED_VIDEO_FRAME: topic=%s, timestamp=%d, payload_size=%d bytes",
-			ottTopic, timestampNs, len(payloadBytes),
-		)
+		d.logger.Debugf("Received ENCODED_VIDEO_FRAME for topic '%s'", ottTopic)
+
+		// Extract and log metadata for debugging
+		metadata := ottMsg.VideoMetadata(nil)
+		if metadata != nil {
+			frameTypeStr := metadata.FrameType().String()
+			encodingFormat := string(metadata.EncodingFormat())
+			frameId := string(metadata.FrameId())
+
+			d.logger.Infof("Video metadata: seq=%d, type=%s, %dx%d, format=%s, frame_id=%s, orig_ts=%d",
+				metadata.SequenceNumber(),
+				frameTypeStr,
+				metadata.Width(),
+				metadata.Height(),
+				encodingFormat,
+				frameId,
+				metadata.OriginalTimestampNs())
+		} else {
+			d.logger.Warnf("ENCODED_VIDEO_FRAME message has no metadata")
+		}
 
 		// Forward the frame to VideoService if available
 		d.mu.RLock()
