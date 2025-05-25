@@ -12,8 +12,7 @@ body {
 #joystick-container {
     width: 200px; /* Overall container size */
     height: 200px;
-    margin-top: 20px;
-    margin-bottom: 20px;
+    margin: 20px auto; /* Center horizontally with auto margins */
     display: flex; /* Use flexbox to center the base */
     justify-content: center;
     align-items: center;
