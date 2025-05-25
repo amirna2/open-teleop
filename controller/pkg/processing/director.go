@@ -115,7 +115,15 @@ func (d *MessageDirector) SetProcessor(processor MessageProcessor) {
 
 	// Set processor for each pool
 	if d.highPriorityPool != nil {
-		d.highPriorityPool.SetProcessor(processor)
+		// Use high-priority processor if VideoService is available, otherwise use the provided processor
+		if d.videoService != nil {
+			d.logger.Debugf("Setting high-priority processor with VideoService for HIGH pool")
+			highPriorityProcessor := NewHighPriorityProcessor(d.videoService, processor)
+			d.highPriorityPool.SetProcessor(highPriorityProcessor)
+		} else {
+			d.logger.Debugf("VideoService not available, using standard processor for HIGH pool")
+			d.highPriorityPool.SetProcessor(processor)
+		}
 	}
 
 	if d.standardPool != nil {

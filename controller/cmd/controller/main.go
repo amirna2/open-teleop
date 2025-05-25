@@ -327,9 +327,9 @@ func setupProcessingComponents(cfg *config.Config, logger customlog.Logger, zmqS
 		bootstrapCfg.Processing.StandardPriorityWorkers,
 		bootstrapCfg.Processing.LowPriorityWorkers,
 	)
+	messageDirector.SetVideoService(videoService)
 	messageDirector.SetProcessor(rosProcessor.CreateProcessorFunc())
 	messageDirector.SetResultHandler(resultHandler.CreateHandlerFunc())
-	messageDirector.SetVideoService(videoService)
 	zmqService.SetMessageDirector(messageDirector)
 	zmqService.GetDispatcher().(*zeromq.MessageDispatcher).SetVideoService(videoService)
 	messageDirector.Start()

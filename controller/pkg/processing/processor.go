@@ -149,7 +149,7 @@ func (p *RosMessageProcessor) CreateProcessorFunc() MessageProcessor {
 	}
 }
 
-func NewHighPriorityProcessor(videoService *video.VideoService, rosProcessor *RosMessageProcessor) MessageProcessor {
+func NewHighPriorityProcessor(videoService *video.VideoService, rosProcessor MessageProcessor) MessageProcessor {
 	return func(ottMsg *message.OttMessage) (map[string]interface{}, error) {
 		if ottMsg.ContentType() == message.ContentTypeENCODED_VIDEO_FRAME {
 			topic := string(ottMsg.Ott())
@@ -159,6 +159,6 @@ func NewHighPriorityProcessor(videoService *video.VideoService, rosProcessor *Ro
 			return map[string]interface{}{"status": "video_frame_broadcast"}, nil
 		}
 		// Else, process as ROS2 message
-		return rosProcessor.ProcessMessage(ottMsg)
+		return rosProcessor(ottMsg)
 	}
 }

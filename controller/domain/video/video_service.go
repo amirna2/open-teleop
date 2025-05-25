@@ -51,7 +51,7 @@ func (s *VideoService) BroadcastVideoFrame(topic string, timestamp int64, frame 
 			delete(s.clients, conn)
 		}
 	}
-	s.logger.Debugf("Broadcasted video frame (%d bytes) to %d clients (topic: %s, timestamp: %d)", len(frame), len(s.clients), topic, timestamp)
+	s.logger.Infof("Broadcasted video frame (%d bytes) to %d clients (topic: %s, timestamp: %d)", len(frame), len(s.clients), topic, timestamp)
 }
 
 // GetClientCount returns the number of currently connected clients

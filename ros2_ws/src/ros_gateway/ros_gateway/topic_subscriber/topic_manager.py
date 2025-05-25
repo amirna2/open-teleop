@@ -59,6 +59,11 @@ class TopicManager:
             if direction == 'OUTBOUND':
                 ros_topic = mapping.get('ros_topic')
                 if ros_topic:
+                    # Skip topics with encoder_params - these are handled by A/V node
+                    if 'encoder_params' in mapping:
+                        self.logger.info(f"Skipping A/V topic '{ros_topic}' - will be handled by A/V node")
+                        continue
+                    
                     # Apply defaults to the mapping before storing
                     full_mapping = new_defaults.copy()
                     full_mapping.update(mapping)
