@@ -3,38 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Open Teleop Control</title>
+    <title>Open Teleop Admin Dashboard</title>
     <!-- Main and component-specific stylesheets -->
     <link rel="stylesheet" href="css/main.css">
-    <link rel="stylesheet" href="css/tabs.css">
+    <link rel="stylesheet" href="css/dashboard.css">
     <link rel="stylesheet" href="css/teleop.css">
     <link rel="stylesheet" href="css/config.css">
 </head>
 <body>
-    <h1>Open Teleop Controller UI</h1>
-
-    <!-- Tab Navigation -->
-    <div class="tab-container">
-        <button class="tab-link active" onclick="openTab(event, 'teleop')">Teleop</button>
-        <button class="tab-link" onclick="openTab(event, 'config')">Configuration</button>
-    </div>
-
-    <!-- Tab Content -->
-    <div id="teleop" class="tab-content" style="display: block;">
-        <h2>Joystick Control</h2>
-        <div id="joystick-container">
-            <!-- Custom Joystick Elements -->
-            <div id="joystick-base">
-                <div id="joystick-handle"></div>
+    <!-- Dashboard Header -->
+    <header class="dashboard-header">
+        <h1>Open Teleop Admin Dashboard</h1>
+        <div class="system-status">
+            <div class="status-item">
+                <span class="status-label">System:</span>
+                <span id="system-status" class="status-value">Initializing...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Video:</span>
+                <span id="video-status-header" class="status-value">Disconnected</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Control:</span>
+                <span id="control-status-header" class="status-value">Disconnected</span>
             </div>
         </div>
-        <div id="status">
-            Status: Disconnected
-        </div>
-        
-        <!-- Video Stream Section -->
-        <div id="video-section">
-            <h3>Video Stream</h3>
+    </header>
+
+    <!-- Main Dashboard Grid -->
+    <main class="dashboard-grid">
+        <!-- Video Feed Section -->
+        <section class="video-section">
+            <h2>Video Stream</h2>
             <div id="video-container">
                 <video id="video-player" controls muted autoplay playsinline>
                     Your browser does not support the video tag.
@@ -45,68 +45,83 @@
                     <span id="video-codec">Codec: --</span>
                 </div>
             </div>
-            
-            <!-- Video Statistics Section -->
-            <div id="video-stats">
-                <h4>Stream Statistics</h4>
-                <div id="video-stats-content">
-                    <div class="stats-row">
-                        <span class="stats-label">Frames Received:</span>
-                        <span id="stats-frames">0</span>
-                    </div>
-                    <div class="stats-row">
-                        <span class="stats-label">Frames Decoded:</span>
-                        <span id="stats-decoded">0</span>
-                    </div>
-                    <div class="stats-row">
-                        <span class="stats-label">Decode Errors:</span>
-                        <span id="stats-errors">0</span>
-                    </div>
-                    <div class="stats-row">
-                        <span class="stats-label">Error Rate:</span>
-                        <span id="stats-error-rate">0%</span>
-                    </div>
-                    <div class="stats-row">
-                        <span class="stats-label">Current FPS:</span>
-                        <span id="stats-fps">--</span>
-                    </div>
-                    <div class="stats-row">
-                        <span class="stats-label">Avg Frame Size:</span>
-                        <span id="stats-frame-size">-- bytes</span>
-                    </div>
-                    <div class="stats-row">
-                        <span class="stats-label">Key Frames:</span>
-                        <span id="stats-key-frames">0</span>
-                    </div>
+        </section>
+
+        <!-- Control Section -->
+        <section class="control-section">
+            <h2>Robot Control</h2>
+            <div id="joystick-container">
+                <div id="joystick-base">
+                    <div id="joystick-handle"></div>
                 </div>
             </div>
-        </div>
-    </div>
+            <div id="status">
+                Status: Disconnected
+            </div>
+        </section>
 
-    <div id="config" class="tab-content">
-        <h2>Operational Configuration (YAML)</h2>
-        <textarea id="config-yaml" rows="20" cols="80" placeholder="Click 'Load Current Config' or paste YAML here..."></textarea>
-        <br>
-        <button id="load-config-btn">Load Current Config</button>
-        <button id="save-config-btn">Save Configuration</button>
-        <p id="config-status"></p> <!-- Status messages for config operations -->
-    </div>
+        <!-- Statistics Section -->
+        <section class="stats-section">
+            <h2>Stream Statistics</h2>
+            <div id="video-stats-content">
+                <div class="stats-row">
+                    <span class="stats-label">Frames Received:</span>
+                    <span id="stats-frames">0</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-label">Frames Decoded:</span>
+                    <span id="stats-decoded">0</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-label">Decode Errors:</span>
+                    <span id="stats-errors">0</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-label">Error Rate:</span>
+                    <span id="stats-error-rate">0%</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-label">Current FPS:</span>
+                    <span id="stats-fps">--</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-label">Avg Frame Size:</span>
+                    <span id="stats-frame-size">-- bytes</span>
+                </div>
+                <div class="stats-row">
+                    <span class="stats-label">Key Frames:</span>
+                    <span id="stats-key-frames">0</span>
+                </div>
+            </div>
+        </section>
 
-    <!-- Core libraries (if any) first -->
-    <!-- FlatBuffers library for video message parsing -->
+        <!-- Configuration Section -->
+        <section class="config-section">
+            <h2>System Configuration</h2>
+            <div class="config-controls">
+                <button id="load-config-btn">Load Current Config</button>
+                <button id="save-config-btn">Save Configuration</button>
+                <button id="toggle-config-btn">Show/Hide Config</button>
+            </div>
+            <div id="config-panel" class="config-panel hidden">
+                <textarea id="config-yaml" rows="15" cols="50" placeholder="Click 'Load Current Config' or paste YAML here..."></textarea>
+                <p id="config-status"></p>
+            </div>
+        </section>
+    </main>
+
+    <!-- Core libraries -->
     <script src="https://cdn.jsdelivr.net/npm/flatbuffers@25.2.10/js/flatbuffers.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
 
-    <!-- API and UI Component Scripts -->
+    <!-- Application Scripts -->
     <script src="js/api.js"></script>
-    <script src="js/ui/tabs.js"></script>
     <script src="js/ui/teleop.js"></script>
     <script src="js/ui/video.js"></script>
-    <!-- Add js-yaml library for validation -->
-    <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
     <script src="js/ui/config.js"></script>
+    <script src="js/ui/dashboard.js"></script>
 
-    <!-- Main orchestrating script last -->
+    <!-- Main orchestrating script -->
     <script src="js/main.js"></script>
-
 </body>
 </html> 

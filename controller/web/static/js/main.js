@@ -5,18 +5,19 @@ console.log("main.js loaded - VERSION 2025-01-25");
 document.addEventListener('DOMContentLoaded', () => {
     console.log('DOM fully loaded and parsed');
 
-    // Initialize UI Components
+    // Initialize Dashboard
     try {
-        if (typeof initTabs === 'function') {
-            initTabs();
-            console.log('✅ initTabs completed successfully');
+        if (typeof initDashboard === 'function') {
+            initDashboard();
+            console.log('✅ initDashboard completed successfully');
         } else {
-            console.error("initTabs function not found in js/ui/tabs.js");
+            console.error("initDashboard function not found in js/ui/dashboard.js");
         }
     } catch (error) {
-        console.error('❌ Error in initTabs:', error);
+        console.error('❌ Error in initDashboard:', error);
     }
 
+    // Initialize UI Components
     try {
         if (typeof initTeleop === 'function') {
             initTeleop();
@@ -39,43 +40,27 @@ document.addEventListener('DOMContentLoaded', () => {
         console.error('❌ Error in initConfig:', error);
     }
 
-    console.log('🔍 About to check for initVideo function...');
-    console.log('🎬 Checking for initVideo function...');
-    console.log('initVideo type:', typeof initVideo);
-    console.log('window.initVideo type:', typeof window.initVideo);
-    console.log('globalThis.initVideo type:', typeof globalThis.initVideo);
-    console.log('All window properties with "init":', Object.keys(window).filter(key => key.includes('init')));
-    
-    // Video initialization is now handled by tab switching logic
-    // Only initialize if teleop tab is the default active tab
-    const teleopTab = document.getElementById('teleop');
-    const isDefaultActive = teleopTab && teleopTab.style.display !== 'none';
-    
-    if (isDefaultActive) {
-        if (typeof initVideo === 'function') {
-            console.log('✅ Found initVideo function, calling it for default tab...');
-            try {
-                initVideo();
-            } catch (error) {
-                console.error('❌ Error calling initVideo:', error);
-            }
-        } else if (typeof window.initVideo === 'function') {
-            console.log('✅ Found window.initVideo function, calling it for default tab...');
-            try {
-                window.initVideo();
-            } catch (error) {
-                console.error('❌ Error calling window.initVideo:', error);
-            }
-        } else {
-            console.error("❌ initVideo function not found in js/ui/video.js");
-            console.log('Available functions:', Object.keys(window).filter(key => key.includes('init')));
-            console.log('All window properties:', Object.keys(window).slice(0, 20));
+    // Initialize Video (always initialize in dashboard layout)
+    console.log('🎬 Initializing video for dashboard...');
+    if (typeof initVideo === 'function') {
+        console.log('✅ Found initVideo function, calling it...');
+        try {
+            initVideo();
+        } catch (error) {
+            console.error('❌ Error calling initVideo:', error);
+        }
+    } else if (typeof window.initVideo === 'function') {
+        console.log('✅ Found window.initVideo function, calling it...');
+        try {
+            window.initVideo();
+        } catch (error) {
+            console.error('❌ Error calling window.initVideo:', error);
         }
     } else {
-        console.log('📺 Teleop tab not active on load, video initialization deferred to tab switching');
+        console.error("❌ initVideo function not found in js/ui/video.js");
     }
 
-    console.log("Initialization complete.");
+    console.log("Dashboard initialization complete.");
 });
 
 // Note: Joystick functionality is now handled in js/ui/teleop.js 

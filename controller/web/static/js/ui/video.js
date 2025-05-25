@@ -40,13 +40,6 @@ let stats = {
 function initVideo() {
     console.log('🎬 Initializing Video Streaming...');
     
-    // Check if teleop tab is currently active
-    const teleopTab = document.getElementById('teleop');
-    if (!teleopTab || teleopTab.style.display === 'none') {
-        console.log('⚠️ Teleop tab not active, skipping video initialization');
-        return;
-    }
-    
     // Set streaming as active
     videoStreamingActive = true;
 
@@ -74,14 +67,11 @@ function initVideo() {
     console.log('🔍 Looking for video elements...');
     console.log('videoPlayer:', videoPlayer);
     console.log('videoStatusDiv:', videoStatusDiv);
-    console.log('teleopTab display:', teleopTab.style.display);
-    console.log('teleopTab offsetParent:', teleopTab.offsetParent);
     console.log('document.readyState:', document.readyState);
     
     debugLog('🔍 Looking for video elements...');
     debugLog('videoPlayer:', videoPlayer);
     debugLog('videoStatusDiv:', videoStatusDiv);
-    debugLog('teleopTab display:', teleopTab.style.display);
 
     if (!videoPlayer || !videoStatusDiv) {
         console.error("❌ Video UI elements not found!");
@@ -109,6 +99,10 @@ function initVideo() {
     };
 
     updateVideoStatus('Video: Initializing...', 'orange');
+    // Also directly update the header status
+    if (window.updateVideoStatusHeader) {
+        window.updateVideoStatusHeader('Initializing', 'initializing');
+    }
 
     // Initialize WebCodecs H.264 decoder
     initWebCodecsDecoder();
@@ -125,6 +119,10 @@ function connectVideoWebSocket() {
     console.log(`🔗 Connecting to Video WebSocket: ${wsUrl}`);
     debugLog(`🔗 Connecting to Video WebSocket: ${wsUrl}`);
     updateVideoStatus('Video: Connecting...', 'orange');
+    // Also directly update the header status
+    if (window.updateVideoStatusHeader) {
+        window.updateVideoStatusHeader('Connecting', 'warning');
+    }
 
     // Close existing connection if any
     if (videoWs && videoWs.readyState !== WebSocket.CLOSED) {
@@ -142,11 +140,35 @@ function connectVideoWebSocket() {
         videoWs.onopen = () => {
             console.log('✅ Video WebSocket connected');
             updateVideoStatus('Video: Connected', 'green');
+            // Also directly update the header status
+            if (window.updateVideoStatusHeader) {
+                window.updateVideoStatusHeader('Connected', 'connected');
+            }
+            
+            // Reset frame counter for proper "Streaming" status detection
+            frameCount = 0;
+            lastFrameTime = 0;
+            fps = 0;
+            
+            // Fallback: Check if we're receiving frames after 2 seconds
+            setTimeout(() => {
+                if (frameCount > 0 && videoWs && videoWs.readyState === WebSocket.OPEN) {
+                    console.log('🔄 Fallback: Ensuring streaming status is updated');
+                    updateVideoStatus('Video: Streaming', 'green');
+                    if (window.updateVideoStatusHeader) {
+                        window.updateVideoStatusHeader('Streaming', 'connected');
+                    }
+                }
+            }, 2000);
         };
 
         videoWs.onclose = (event) => {
             console.log(`❌ Video WebSocket disconnected: ${event.code}`);
             updateVideoStatus(`Video: Disconnected (${event.code})`, 'red');
+            // Also directly update the header status
+            if (window.updateVideoStatusHeader) {
+                window.updateVideoStatusHeader('Disconnected', 'disconnected');
+            }
             videoWs = null;
             
             // Only attempt to reconnect if streaming is still active
@@ -161,6 +183,10 @@ function connectVideoWebSocket() {
         videoWs.onerror = (error) => {
             console.error('❌ Video WebSocket error:', error);
             updateVideoStatus('Video: Error', 'red');
+            // Also directly update the header status
+            if (window.updateVideoStatusHeader) {
+                window.updateVideoStatusHeader('Error', 'disconnected');
+            }
         };
 
         videoWs.onmessage = (event) => {
@@ -197,21 +223,29 @@ function initWebCodecsDecoder() {
     
     // Create or reuse canvas for video rendering
     let canvas = videoPlayer;
-    if (!canvas || canvas.tagName !== 'CANVAS') {
+    
+    // Always recreate canvas to ensure proper sizing
+    if (true) {
         canvas = document.createElement('canvas');
         canvas.id = 'video-player'; // Ensure it has the proper ID
-        canvas.width = 320;
-        canvas.height = 240;
+        
+        // Set canvas to a reasonable size for better quality
+        // Use a larger canvas size that will be scaled down by CSS
+        canvas.width = 800;
+        canvas.height = 600;
+        console.log(`📐 Setting canvas size to: ${canvas.width}x${canvas.height}`);
+        
         canvas.style.width = '100%';
         canvas.style.height = '100%';
         canvas.style.objectFit = 'contain';
+        canvas.style.backgroundColor = '#000';
         
         // Replace video element with canvas
         if (videoPlayer && videoPlayer.parentNode) {
             videoPlayer.parentNode.replaceChild(canvas, videoPlayer);
         }
         videoPlayer = canvas;
-        console.log('🎨 Created new canvas element with ID video-player');
+        console.log(`🎨 Created new canvas element: ${canvas.width}x${canvas.height}`);
     }
     
     const ctx = canvas.getContext('2d');
@@ -224,8 +258,42 @@ function initWebCodecsDecoder() {
             // Track successful decode
             stats.framesDecoded++;
             
-            // Draw frame to canvas
-            ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+            // Calculate aspect-ratio-aware scaling and centering
+            const frameWidth = frame.displayWidth;
+            const frameHeight = frame.displayHeight;
+            const canvasWidth = canvas.width;
+            const canvasHeight = canvas.height;
+            
+            // Calculate scale to fit frame in canvas while maintaining aspect ratio
+            const scaleX = canvasWidth / frameWidth;
+            const scaleY = canvasHeight / frameHeight;
+            const scale = Math.min(scaleX, scaleY); // Use smaller scale to fit entirely
+            
+            // Calculate centered position
+            const scaledWidth = frameWidth * scale;
+            const scaledHeight = frameHeight * scale;
+            const x = (canvasWidth - scaledWidth) / 2;
+            const y = (canvasHeight - scaledHeight) / 2;
+            
+            // FORCE CENTER POSITION FOR DEBUGGING
+            console.log(`BEFORE: x=${x}, y=${y}, scaledWidth=${scaledWidth}, scaledHeight=${scaledHeight}`);
+            // Force to exact center
+            const centerX = canvasWidth / 2 - scaledWidth / 2;
+            const centerY = canvasHeight / 2 - scaledHeight / 2;
+            console.log(`FORCED CENTER: centerX=${centerX}, centerY=${centerY}`);
+            
+            // Debug logging for first few frames
+            if (stats.framesDecoded <= 5) {
+                console.log(`🎬 Frame scaling: ${frameWidth}x${frameHeight} → ${scaledWidth.toFixed(1)}x${scaledHeight.toFixed(1)} at (${x.toFixed(1)}, ${y.toFixed(1)}) on ${canvasWidth}x${canvasHeight} canvas`);
+                console.log(`🎬 Scale factors: scaleX=${scaleX.toFixed(2)}, scaleY=${scaleY.toFixed(2)}, final scale=${scale.toFixed(2)}`);
+            }
+            
+            // Clear canvas with black background
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+            
+            // Draw the video frame centered on the canvas
+            ctx.drawImage(frame, centerX, centerY, scaledWidth, scaledHeight);
             frame.close();
             
             // Don't update status here - it's handled in handleVideoMessage
@@ -436,12 +504,17 @@ function handleVideoMessage(data) {
         stats.decodeErrors++;
     }
 
-    // Update UI only once when streaming starts to prevent any shaking
+    // Update UI when streaming starts to prevent any shaking
     if (frameCount === 1) {
         // One-time status update when streaming starts
         updateVideoStatus('Video: Streaming', 'green');
+        // Also directly update the header status to ensure synchronization
+        if (window.updateVideoStatusHeader) {
+            window.updateVideoStatusHeader('Streaming', 'connected');
+        }
         // Initialize video info display once
         initializeVideoInfoDisplay();
+        console.log('🎬 Video streaming status updated to "Streaming"');
     }
     
     // Update statistics (throttled to once per second)
@@ -537,6 +610,18 @@ function updateVideoStats() {
         return; // Update only once per second
     }
     stats.lastStatsUpdate = currentTime;
+    
+    // Safety check: If we have active frames but status isn't "Streaming", update it
+    if (stats.framesReceived > 10 && stats.framesDecoded > 5) {
+        const videoStatusDiv = document.getElementById('video-status');
+        if (videoStatusDiv && !videoStatusDiv.textContent.includes('Streaming')) {
+            console.log('🔧 Safety check: Updating status to Streaming based on active frame processing');
+            updateVideoStatus('Video: Streaming', 'green');
+            if (window.updateVideoStatusHeader) {
+                window.updateVideoStatusHeader('Streaming', 'connected');
+            }
+        }
+    }
 
     const framesElement = document.getElementById('stats-frames');
     const decodedElement = document.getElementById('stats-decoded');
@@ -636,18 +721,59 @@ function cleanupVideo() {
     
     // Update UI to show disconnected state
     updateVideoStatus('Video: Disconnected', 'red');
+    // Also directly update the header status
+    if (window.updateVideoStatusHeader) {
+        window.updateVideoStatusHeader('Disconnected', 'disconnected');
+    }
     
     // Clear video display (if canvas)
     if (videoPlayer && videoPlayer.tagName === 'CANVAS') {
         const ctx = videoPlayer.getContext('2d');
-        ctx.clearRect(0, 0, videoPlayer.width, videoPlayer.height);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, videoPlayer.width, videoPlayer.height);
     }
     
     console.log('✅ Video streaming cleanup completed');
 }
 
+// Function to resize canvas when container changes
+function resizeCanvas() {
+    if (videoPlayer && videoPlayer.tagName === 'CANVAS') {
+        // For now, keep canvas at fixed high resolution
+        const targetWidth = 800;
+        const targetHeight = 600;
+        
+        if (videoPlayer.width !== targetWidth || videoPlayer.height !== targetHeight) {
+            console.log(`🔄 Resizing canvas: ${videoPlayer.width}x${videoPlayer.height} → ${targetWidth}x${targetHeight}`);
+            videoPlayer.width = targetWidth;
+            videoPlayer.height = targetHeight;
+            
+            // Clear with black background
+            const ctx = videoPlayer.getContext('2d');
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, targetWidth, targetHeight);
+        }
+    }
+}
+
+// Set up window resize listener for responsive canvas
+window.addEventListener('resize', () => {
+    setTimeout(resizeCanvas, 100); // Small delay to let layout settle
+});
+
+// Function to force canvas recreation (for testing)
+function recreateCanvas() {
+    console.log('🔄 Force recreating canvas...');
+    if (window.videoDecoder && window.videoDecoder.state !== 'closed') {
+        window.videoDecoder.close();
+    }
+    initWebCodecsDecoder();
+}
+
 // Export functions for main.js to call
 window.initVideo = initVideo;
 window.cleanupVideo = cleanupVideo;
+window.resizeCanvas = resizeCanvas;
+window.recreateCanvas = recreateCanvas;
 
-debugLog('🔧 initVideo and cleanupVideo functions exported to window'); 
+debugLog('🔧 initVideo, cleanupVideo, resizeCanvas, and recreateCanvas functions exported to window'); 
