@@ -10,6 +10,23 @@ enum ContentType : byte {
   // Other types can be added later as the platform evolves
 }
 
+enum FrameType : byte {
+  FRAME_TYPE_UNKNOWN = 0,
+  FRAME_TYPE_KEY = 1,         // Key frame (I-frame for video)
+  FRAME_TYPE_DELTA = 2        // Delta frame (P/B-frame for video)
+}
+
+// Video frame metadata for ENCODED_VIDEO_FRAME content type
+table VideoFrameMetadata {
+  sequence_number:    uint64;     // Frame sequence number for ordering/loss detection
+  original_timestamp_ns: int64;   // Original frame timestamp from ROS header (nanoseconds)
+  frame_type:         FrameType;  // Key frame vs Delta frame
+  encoding_format:    string;     // "video/h264", "video/vp8", etc.
+  width:              uint32;     // Frame width in pixels
+  height:             uint32;     // Frame height in pixels
+  frame_id:           string;     // ROS header frame_id
+}
+
 table OttMessage {
   version:          uint8 = 1;  // Schema version, starting with 1
   
@@ -20,6 +37,9 @@ table OttMessage {
   // Single identifier from config
   ott:              string;   // Open-Teleop-Topic name (e.g., "teleop.sensor.battery_state")  
   timestamp_ns:     int64;    // When bridge received/processed the message (nanoseconds since epoch)
+  
+  // Optional metadata for specific content types
+  video_metadata:   VideoFrameMetadata;  // Only populated for ENCODED_VIDEO_FRAME
 }
 
 root_type OttMessage; 
