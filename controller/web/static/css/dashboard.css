@@ -125,6 +125,8 @@ section h2 {
     border-radius: 8px;
     overflow: hidden;
     min-height: 400px;
+    justify-content: center;
+    align-items: center;
 }
 
 #video-player {
@@ -132,6 +134,8 @@ section h2 {
     width: 100%;
     height: 100%;
     object-fit: contain;
+    display: block;
+    margin: auto;
 }
 
 #video-status {

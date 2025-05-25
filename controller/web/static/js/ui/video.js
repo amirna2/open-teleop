@@ -224,28 +224,22 @@ function initWebCodecsDecoder() {
     // Create or reuse canvas for video rendering
     let canvas = videoPlayer;
     
-    // Always recreate canvas to ensure proper sizing
-    if (true) {
+    // Create or reuse canvas for video rendering
+    if (!canvas || canvas.tagName !== 'CANVAS') {
         canvas = document.createElement('canvas');
-        canvas.id = 'video-player'; // Ensure it has the proper ID
-        
-        // Set canvas to a reasonable size for better quality
-        // Use a larger canvas size that will be scaled down by CSS
-        canvas.width = 800;
-        canvas.height = 600;
-        console.log(`📐 Setting canvas size to: ${canvas.width}x${canvas.height}`);
-        
+        canvas.id = 'video-player';
+        canvas.width = 320;
+        canvas.height = 240;
         canvas.style.width = '100%';
         canvas.style.height = '100%';
         canvas.style.objectFit = 'contain';
-        canvas.style.backgroundColor = '#000';
         
         // Replace video element with canvas
         if (videoPlayer && videoPlayer.parentNode) {
             videoPlayer.parentNode.replaceChild(canvas, videoPlayer);
         }
         videoPlayer = canvas;
-        console.log(`🎨 Created new canvas element: ${canvas.width}x${canvas.height}`);
+        console.log('🎨 Created new canvas element with ID video-player');
     }
     
     const ctx = canvas.getContext('2d');
@@ -258,42 +252,8 @@ function initWebCodecsDecoder() {
             // Track successful decode
             stats.framesDecoded++;
             
-            // Calculate aspect-ratio-aware scaling and centering
-            const frameWidth = frame.displayWidth;
-            const frameHeight = frame.displayHeight;
-            const canvasWidth = canvas.width;
-            const canvasHeight = canvas.height;
-            
-            // Calculate scale to fit frame in canvas while maintaining aspect ratio
-            const scaleX = canvasWidth / frameWidth;
-            const scaleY = canvasHeight / frameHeight;
-            const scale = Math.min(scaleX, scaleY); // Use smaller scale to fit entirely
-            
-            // Calculate centered position
-            const scaledWidth = frameWidth * scale;
-            const scaledHeight = frameHeight * scale;
-            const x = (canvasWidth - scaledWidth) / 2;
-            const y = (canvasHeight - scaledHeight) / 2;
-            
-            // FORCE CENTER POSITION FOR DEBUGGING
-            console.log(`BEFORE: x=${x}, y=${y}, scaledWidth=${scaledWidth}, scaledHeight=${scaledHeight}`);
-            // Force to exact center
-            const centerX = canvasWidth / 2 - scaledWidth / 2;
-            const centerY = canvasHeight / 2 - scaledHeight / 2;
-            console.log(`FORCED CENTER: centerX=${centerX}, centerY=${centerY}`);
-            
-            // Debug logging for first few frames
-            if (stats.framesDecoded <= 5) {
-                console.log(`🎬 Frame scaling: ${frameWidth}x${frameHeight} → ${scaledWidth.toFixed(1)}x${scaledHeight.toFixed(1)} at (${x.toFixed(1)}, ${y.toFixed(1)}) on ${canvasWidth}x${canvasHeight} canvas`);
-                console.log(`🎬 Scale factors: scaleX=${scaleX.toFixed(2)}, scaleY=${scaleY.toFixed(2)}, final scale=${scale.toFixed(2)}`);
-            }
-            
-            // Clear canvas with black background
-            ctx.fillStyle = '#000';
-            ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-            
-            // Draw the video frame centered on the canvas
-            ctx.drawImage(frame, centerX, centerY, scaledWidth, scaledHeight);
+            // Draw frame to canvas
+            ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
             frame.close();
             
             // Don't update status here - it's handled in handleVideoMessage
