@@ -196,7 +196,7 @@ class WebcamPublisher(Node):
                 self.frame_count += 1
                 
                 # Log periodic statistics
-                if self.frame_count % (self.fps * 5) == 0:  # Every 5 seconds
+                if self.frame_count % (self.fps * 15) == 0:  # Every 5 seconds
                     elapsed = time.time() - self.start_time
                     actual_fps = self.frame_count / elapsed if elapsed > 0 else 0
                     subscribers = self.image_publisher.get_subscription_count()

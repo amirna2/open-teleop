@@ -1,9 +1,18 @@
 // UI Logic for the Teleop Tab (Joystick, WebSocket)
 
-console.log("teleop.js loaded");
+// Debug configuration
+const TELEOP_DEBUG = false;
+
+function teleopDebugLog(...args) {
+    if (TELEOP_DEBUG) {
+        console.log(...args);
+    }
+}
+
+teleopDebugLog("teleop.js loaded");
 
 function initTeleop() {
-    console.log('Initializing Teleop Tab...');
+    teleopDebugLog('Initializing Teleop Tab...');
 
     const statusDiv = document.getElementById('status');
     const joystickContainer = document.getElementById('joystick-container');
@@ -46,7 +55,7 @@ function initTeleop() {
         if (e.type === 'touchstart') {
             e.preventDefault(); // Prevent scrolling on touch devices
         }
-        // console.log("Drag Start");
+        teleopDebugLog("Drag Start");
     }
 
     function stopDragging(e) {
@@ -54,7 +63,7 @@ function initTeleop() {
         isDragging = false;
         joystickHandle.style.transition = 'transform 0.1s ease-out'; // Smooth return
         joystickHandle.style.transform = 'translate(-50%, -50%)'; // Return to center
-        // console.log("Drag End: Sending zero velocity");
+        teleopDebugLog("Drag End: Sending zero velocity");
         sendJoystickData(0, 0);
     }
 
@@ -113,7 +122,7 @@ function initTeleop() {
         // Only send if values have changed significantly or are non-zero
         // Add tolerance check to avoid sending rapid zeros when stopping
         if (Math.abs(linear - lastSentLinear) > 0.01 || Math.abs(angular - lastSentAngular) > 0.01 || (linear === 0 && angular === 0 && (lastSentLinear !== 0 || lastSentAngular !== 0))) {
-             // console.log(`Attempting send: L=${linear.toFixed(2)}, A=${angular.toFixed(2)}`);
+             teleopDebugLog(`Attempting send: L=${linear.toFixed(2)}, A=${angular.toFixed(2)}`);
              if (typeof sendTeleopCommand === 'function') {
                 sendTeleopCommand(linear, angular);
              } else {
@@ -125,7 +134,7 @@ function initTeleop() {
              // Do nothing if already stopped and trying to send zero again
         } else if (Math.abs(linear - lastSentLinear) <= 0.01 && Math.abs(angular - lastSentAngular) <= 0.01 && (linear !==0 || angular !== 0)) {
             // If values haven't changed much and aren't zero, still send periodically? Maybe not needed for joystick.
-            // console.log("Values similar, skipping send.");
+            teleopDebugLog("Values similar, skipping send.");
         }
     }
 

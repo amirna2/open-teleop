@@ -1,12 +1,21 @@
 // Dashboard UI Logic
 
-console.log("dashboard.js loaded");
+// Debug configuration
+const DASHBOARD_DEBUG = false;
+
+function dashboardDebugLog(...args) {
+    if (DASHBOARD_DEBUG) {
+        console.log(...args);
+    }
+}
+
+dashboardDebugLog("dashboard.js loaded");
 
 // Dashboard state
 let configPanelVisible = false;
 
 function initDashboard() {
-    console.log('🎛️ Initializing Dashboard...');
+    dashboardDebugLog('🎛️ Initializing Dashboard...');
     
     // Set up config panel toggle
     const toggleConfigBtn = document.getElementById('toggle-config-btn');
@@ -20,7 +29,7 @@ function initDashboard() {
     // Set up status synchronization
     setupStatusSync();
     
-    console.log('✅ Dashboard initialized');
+    dashboardDebugLog('✅ Dashboard initialized');
 }
 
 function toggleConfigPanel() {
@@ -86,7 +95,7 @@ function setupStatusSync() {
         // Function to sync video status
         const syncVideoStatus = () => {
             const statusText = videoStatusDiv.textContent;
-            console.log(`🔄 Syncing video status: "${statusText}"`);
+            dashboardDebugLog(`🔄 Syncing video status: "${statusText}"`);
             
             // Check if we have frame statistics indicating active streaming
             const framesElement = document.getElementById('stats-frames');
@@ -96,7 +105,7 @@ function setupStatusSync() {
             
             // If we have frames being received/decoded but status doesn't show streaming, force update
             if (hasFrames && hasDecoded && !statusText.includes('Streaming')) {
-                console.log('🎬 Detected active streaming from statistics, updating status');
+                dashboardDebugLog('🎬 Detected active streaming from statistics, updating status');
                 updateVideoStatusHeader('Streaming', 'connected');
                 return;
             }
@@ -177,4 +186,4 @@ window.updateSystemStatus = updateSystemStatus;
 window.updateVideoStatusHeader = updateVideoStatusHeader;
 window.updateControlStatusHeader = updateControlStatusHeader;
 
-console.log('🎛️ Dashboard functions exported to window'); 
+dashboardDebugLog('🎛️ Dashboard functions exported to window'); 

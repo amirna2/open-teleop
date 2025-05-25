@@ -1,9 +1,18 @@
 // UI Logic for the Configuration Tab
 
-console.log("config.js loaded");
+// Debug configuration
+const CONFIG_DEBUG = false;
+
+function configDebugLog(...args) {
+    if (CONFIG_DEBUG) {
+        console.log(...args);
+    }
+}
+
+configDebugLog("config.js loaded");
 
 function initConfig() {
-    console.log("Initializing Config Tab...");
+    configDebugLog("Initializing Config Tab...");
 
     const loadBtn = document.getElementById('load-config-btn');
     const saveBtn = document.getElementById('save-config-btn');
@@ -54,7 +63,7 @@ async function loadConfigIntoTextArea() {
 
     if (!configTextArea || !configStatus) return;
 
-    console.log("Load Config button clicked or tab activated");
+    configDebugLog("Load Config button clicked or tab activated");
     configStatus.textContent = 'Loading configuration...';
     configStatus.style.color = 'orange';
     configTextArea.value = ''; // Clear previous content
@@ -67,7 +76,7 @@ async function loadConfigIntoTextArea() {
         configTextArea.value = yamlData;
         configStatus.textContent = 'Configuration loaded successfully.';
         configStatus.style.color = 'green';
-        console.log("Configuration loaded into text area.");
+        configDebugLog("Configuration loaded into text area.");
     } catch (error) {
         console.error("Failed to load configuration:", error);
         configStatus.textContent = `Error loading configuration: ${error.message}`;
@@ -81,7 +90,7 @@ async function saveConfigFromTextArea() {
 
     if (!configTextArea || !configStatus) return;
 
-    console.log("Save Config button clicked");
+    configDebugLog("Save Config button clicked");
     const yamlData = configTextArea.value;
 
     if (!yamlData.trim()) {
@@ -100,7 +109,7 @@ async function saveConfigFromTextArea() {
         const successMessage = await updateTeleopConfig(yamlData);
         configStatus.textContent = `Configuration saved successfully: ${successMessage}`;
         configStatus.style.color = 'green';
-        console.log("Configuration saved.");
+        configDebugLog("Configuration saved.");
     } catch (error) {
         console.error("Failed to save configuration:", error);
         configStatus.textContent = `Error saving configuration: ${error.message}`;

@@ -10,7 +10,7 @@ function debugLog(...args) {
     }
 }
 
-console.log("video.js loaded");
+debugLog("video.js loaded");
 
 // Video streaming state
 let videoWs = null;
@@ -38,7 +38,7 @@ let stats = {
 };
 
 function initVideo() {
-    console.log('🎬 Initializing Video Streaming...');
+    debugLog('🎬 Initializing Video Streaming...');
     
     // Set streaming as active
     videoStreamingActive = true;
@@ -53,7 +53,7 @@ function initVideo() {
         if (videoContainer) {
             const canvas = videoContainer.querySelector('canvas');
             if (canvas) {
-                console.log('🎨 Found existing canvas element, reusing it');
+                debugLog('🎨 Found existing canvas element, reusing it');
                 videoElement = canvas;
                 // Give it the video-player ID for consistency
                 canvas.id = 'video-player';
@@ -64,28 +64,25 @@ function initVideo() {
     videoPlayer = videoElement;
     const videoStatusDiv = document.getElementById('video-status');
 
-    console.log('🔍 Looking for video elements...');
-    console.log('videoPlayer:', videoPlayer);
-    console.log('videoStatusDiv:', videoStatusDiv);
-    console.log('document.readyState:', document.readyState);
-    
     debugLog('🔍 Looking for video elements...');
     debugLog('videoPlayer:', videoPlayer);
     debugLog('videoStatusDiv:', videoStatusDiv);
+    debugLog('document.readyState:', document.readyState);
 
     if (!videoPlayer || !videoStatusDiv) {
         console.error("❌ Video UI elements not found!");
-        console.log('videoPlayer:', videoPlayer);
-        console.log('videoStatusDiv:', videoStatusDiv);
-        console.log('Available elements with video in ID:');
-        const videoElements = document.querySelectorAll('[id*="video"]');
-        videoElements.forEach(el => console.log(`  - ${el.id}: ${el.tagName} (visible: ${el.offsetParent !== null}, display: ${getComputedStyle(el).display})`));
-        
-        // Also check all elements in teleop tab
-        const teleopElements = document.querySelectorAll('#teleop *[id]');
-        console.log('All elements with IDs in teleop tab:');
-        teleopElements.forEach(el => console.log(`  - ${el.id}: ${el.tagName}`));
-        
+        if (VIDEO_DEBUG) {
+            console.log('videoPlayer:', videoPlayer);
+            console.log('videoStatusDiv:', videoStatusDiv);
+            console.log('Available elements with video in ID:');
+            const videoElements = document.querySelectorAll('[id*="video"]');
+            videoElements.forEach(el => console.log(`  - ${el.id}: ${el.tagName} (visible: ${el.offsetParent !== null}, display: ${getComputedStyle(el).display})`));
+            
+            // Also check all elements in teleop tab
+            const teleopElements = document.querySelectorAll('#teleop *[id]');
+            console.log('All elements with IDs in teleop tab:');
+            teleopElements.forEach(el => console.log(`  - ${el.id}: ${el.tagName}`));
+        }
         return;
     }
 
@@ -116,7 +113,6 @@ function connectVideoWebSocket() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProtocol}//${window.location.host}/ws/video`;
     
-    console.log(`🔗 Connecting to Video WebSocket: ${wsUrl}`);
     debugLog(`🔗 Connecting to Video WebSocket: ${wsUrl}`);
     updateVideoStatus('Video: Connecting...', 'orange');
     // Also directly update the header status
@@ -126,7 +122,6 @@ function connectVideoWebSocket() {
 
     // Close existing connection if any
     if (videoWs && videoWs.readyState !== WebSocket.CLOSED) {
-        console.log('🔄 Closing existing WebSocket connection');
         debugLog('🔄 Closing existing WebSocket connection');
         videoWs.close();
     }
@@ -138,7 +133,7 @@ function connectVideoWebSocket() {
         debugLog('📡 WebSocket created, setting up event handlers...');
 
         videoWs.onopen = () => {
-            console.log('✅ Video WebSocket connected');
+            debugLog('✅ Video WebSocket connected');
             updateVideoStatus('Video: Connected', 'green');
             // Also directly update the header status
             if (window.updateVideoStatusHeader) {
@@ -153,7 +148,7 @@ function connectVideoWebSocket() {
             // Fallback: Check if we're receiving frames after 2 seconds
             setTimeout(() => {
                 if (frameCount > 0 && videoWs && videoWs.readyState === WebSocket.OPEN) {
-                    console.log('🔄 Fallback: Ensuring streaming status is updated');
+                    debugLog('🔄 Fallback: Ensuring streaming status is updated');
                     updateVideoStatus('Video: Streaming', 'green');
                     if (window.updateVideoStatusHeader) {
                         window.updateVideoStatusHeader('Streaming', 'connected');
@@ -163,7 +158,7 @@ function connectVideoWebSocket() {
         };
 
         videoWs.onclose = (event) => {
-            console.log(`❌ Video WebSocket disconnected: ${event.code}`);
+            debugLog(`❌ Video WebSocket disconnected: ${event.code}`);
             updateVideoStatus(`Video: Disconnected (${event.code})`, 'red');
             // Also directly update the header status
             if (window.updateVideoStatusHeader) {
@@ -239,7 +234,7 @@ function initWebCodecsDecoder() {
             videoPlayer.parentNode.replaceChild(canvas, videoPlayer);
         }
         videoPlayer = canvas;
-        console.log('🎨 Created new canvas element with ID video-player');
+        debugLog('🎨 Created new canvas element with ID video-player');
     }
     
     const ctx = canvas.getContext('2d');
@@ -288,7 +283,7 @@ function initWebCodecsDecoder() {
     
     try {
         decoder.configure(config);
-        console.log('✅ WebCodecs VideoDecoder configured');
+        debugLog('✅ WebCodecs VideoDecoder configured');
         
         // Store decoder for use in frame processing
         window.videoDecoder = decoder;
@@ -474,7 +469,7 @@ function handleVideoMessage(data) {
         }
         // Initialize video info display once
         initializeVideoInfoDisplay();
-        console.log('🎬 Video streaming status updated to "Streaming"');
+        debugLog('🎬 Video streaming status updated to "Streaming"');
     }
     
     // Update statistics (throttled to once per second)
@@ -575,7 +570,7 @@ function updateVideoStats() {
     if (stats.framesReceived > 10 && stats.framesDecoded > 5) {
         const videoStatusDiv = document.getElementById('video-status');
         if (videoStatusDiv && !videoStatusDiv.textContent.includes('Streaming')) {
-            console.log('🔧 Safety check: Updating status to Streaming based on active frame processing');
+            debugLog('🔧 Safety check: Updating status to Streaming based on active frame processing');
             updateVideoStatus('Video: Streaming', 'green');
             if (window.updateVideoStatusHeader) {
                 window.updateVideoStatusHeader('Streaming', 'connected');
@@ -639,25 +634,25 @@ function updateVideoInfo(currentFps, frameSize) {
 }
 
 function cleanupVideo() {
-    console.log('🧹 Cleaning up Video Streaming resources...');
+    debugLog('🧹 Cleaning up Video Streaming resources...');
     
     // Mark streaming as inactive to prevent reconnection
     videoStreamingActive = false;
     
     // Close WebSocket connection
     if (videoWs && videoWs.readyState !== WebSocket.CLOSED) {
-        console.log('🔌 Closing video WebSocket connection');
+        debugLog('🔌 Closing video WebSocket connection');
         videoWs.close();
         videoWs = null;
     }
     
     // Close VideoDecoder
     if (window.videoDecoder && window.videoDecoder.state !== 'closed') {
-        console.log('🎬 Closing VideoDecoder');
+        debugLog('🎬 Closing VideoDecoder');
         try {
             window.videoDecoder.close();
         } catch (e) {
-            console.warn('⚠️ Error closing VideoDecoder:', e);
+            debugLog('⚠️ Error closing VideoDecoder:', e);
         }
         window.videoDecoder = null;
     }
@@ -693,7 +688,7 @@ function cleanupVideo() {
         ctx.fillRect(0, 0, videoPlayer.width, videoPlayer.height);
     }
     
-    console.log('✅ Video streaming cleanup completed');
+    debugLog('✅ Video streaming cleanup completed');
 }
 
 // Function to resize canvas when container changes
@@ -704,7 +699,7 @@ function resizeCanvas() {
         const targetHeight = 600;
         
         if (videoPlayer.width !== targetWidth || videoPlayer.height !== targetHeight) {
-            console.log(`🔄 Resizing canvas: ${videoPlayer.width}x${videoPlayer.height} → ${targetWidth}x${targetHeight}`);
+            debugLog(`🔄 Resizing canvas: ${videoPlayer.width}x${videoPlayer.height} → ${targetWidth}x${targetHeight}`);
             videoPlayer.width = targetWidth;
             videoPlayer.height = targetHeight;
             
@@ -723,7 +718,7 @@ window.addEventListener('resize', () => {
 
 // Function to force canvas recreation (for testing)
 function recreateCanvas() {
-    console.log('🔄 Force recreating canvas...');
+    debugLog('🔄 Force recreating canvas...');
     if (window.videoDecoder && window.videoDecoder.state !== 'closed') {
         window.videoDecoder.close();
     }

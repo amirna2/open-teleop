@@ -1,13 +1,22 @@
 // Logic for handling tab switching behavior
 
-console.log("tabs.js loaded");
+// Debug configuration
+const TABS_DEBUG = false;
+
+function tabsDebugLog(...args) {
+    if (TABS_DEBUG) {
+        console.log(...args);
+    }
+}
+
+tabsDebugLog("tabs.js loaded");
 
 // Functions to initialize tabs, handle clicks, show/hide panels 
 
 function initTabs() {
     // Optional: Add any specific initialization for tabs here if needed.
     // For example, ensuring the default tab is correctly displayed.
-    console.log("Initializing Tabs...");
+    tabsDebugLog("Initializing Tabs...");
     // Activate the default tab (assuming it's 'teleop')
     const defaultTab = document.querySelector('.tab-link[onclick*="teleop"]');
     if (defaultTab) {
@@ -28,7 +37,7 @@ function initTabs() {
 }
 
 function openTab(event, tabName) {
-    console.log(`Switching to tab: ${tabName}`);
+    tabsDebugLog(`Switching to tab: ${tabName}`);
     
     // Get the currently active tab before switching
     const currentActiveTab = document.querySelector('.tab-content[style*="block"]');
@@ -36,11 +45,11 @@ function openTab(event, tabName) {
     
     // Handle cleanup when leaving teleop tab
     if (currentTabName === 'teleop' && tabName !== 'teleop') {
-        console.log('🧹 Leaving teleop tab - cleaning up video resources');
+        tabsDebugLog('🧹 Leaving teleop tab - cleaning up video resources');
         if (typeof window.cleanupVideo === 'function') {
             window.cleanupVideo();
         } else {
-            console.warn('cleanupVideo function not available');
+            tabsDebugLog('cleanupVideo function not available');
         }
     }
     
@@ -80,24 +89,24 @@ function openTab(event, tabName) {
          if (typeof loadConfigIntoTextArea === 'function') {
              loadConfigIntoTextArea();
          } else {
-             console.warn("loadConfigIntoTextArea function not found in config.js - cannot auto-load.");
+             tabsDebugLog("loadConfigIntoTextArea function not found in config.js - cannot auto-load.");
          }
      } else if (tabName === 'teleop') {
          // Reinitialize video when returning to teleop tab
-         console.log('🎬 Entering teleop tab - initializing video resources');
+         tabsDebugLog('🎬 Entering teleop tab - initializing video resources');
          if (typeof window.initVideo === 'function') {
              // Longer delay to ensure DOM is fully ready and visible
              setTimeout(() => {
-                 console.log('🔄 Attempting to reinitialize video...');
+                 tabsDebugLog('🔄 Attempting to reinitialize video...');
                  try {
                      window.initVideo();
-                     console.log('✅ Video reinitialization completed');
+                     tabsDebugLog('✅ Video reinitialization completed');
                  } catch (error) {
                      console.error('❌ Error reinitializing video:', error);
                  }
              }, 250); // Increased delay
          } else {
-             console.warn('initVideo function not available');
+             tabsDebugLog('initVideo function not available');
          }
      }
 } 
