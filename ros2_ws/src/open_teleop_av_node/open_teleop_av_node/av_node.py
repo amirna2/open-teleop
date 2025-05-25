@@ -27,9 +27,32 @@ class GstPipeline:
     """Manages a GStreamer pipeline for video encoding."""
     
     H264_ENCODER_CANDIDATES = [
-        # For nvh264enc, profile: 0=Baseline, 1=Constrained Baseline, 2=Main, 3=High
-        {"name": "nvh264enc", "type": "hardware", "properties": {"tune": "zerolatency", "profile": 0, "gop-size": "key-int-max"}},
-        {"name": "x264enc", "type": "software", "properties": {"tune": "zerolatency", "profile": None, "key-int-max": "key-int-max"}} # x264enc profile is a string like 'baseline'
+        {
+            "name": "nvh264enc", 
+            "type": "hardware", 
+            "fixed_properties": {
+                "tune": "zerolatency", 
+                "profile": 0, # 0=Baseline, 1=Constrained Baseline, 2=Main, 3=High
+                "control-rate": 2, # 0=VBR, 1=VBR_MINQP, 2=CBR, 3=CBR_LOWDELAY_HQ, 4=CBR_HQ, 5=VBR_HQ
+                "insert-sps-pps": True # Ensure SPS/PPS are sent with keyframes
+            },
+            "param_mappings": {
+                "gop_size": "gop-size", # nvh264enc uses gop-size
+                "bitrate": "bitrate" # nvh264enc uses bitrate (kbps)
+            }
+        },
+        {
+            "name": "x264enc", 
+            "type": "software", 
+            "fixed_properties": {
+                "tune": "zerolatency", 
+                # x264enc profile is a string like 'baseline', not setting it here to use default or what user might provide via full params
+            },
+            "param_mappings": {
+                "gop_size": "key-int-max", # x264enc uses key-int-max
+                "bitrate": "bitrate" # x264enc uses bitrate (kbps)
+            }
+        }
     ]
 
     def __init__(self, logger, stream_id, input_topic, output_topic, encoding_format, encoder_params=None):
@@ -85,53 +108,45 @@ class GstPipeline:
                         temp_encoder = Gst.ElementFactory.make(candidate["name"], f"enc_{self.stream_id}")
                         if temp_encoder:
                             try:
-                                # Set common tune property if defined for the candidate
-                                if "tune" in candidate["properties"] and candidate["properties"]["tune"]:
-                                    tune_value = candidate["properties"]["tune"]
-                                    if temp_encoder.find_property("tune"): # GObject.ParamSpec
-                                        temp_encoder.set_property("tune", tune_value)
-                                        self.logger.debug(f"Set {candidate['name']} tune={tune_value}")
-                                    else:
-                                        self.logger.warning(f"Property 'tune' not found on {candidate['name']}, but specified in candidate config.")
+                                # Apply fixed properties for the chosen encoder
+                                if "fixed_properties" in candidate:
+                                    for prop_name, prop_value in candidate["fixed_properties"].items():
+                                        if temp_encoder.find_property(prop_name):
+                                            try:
+                                                temp_encoder.set_property(prop_name, prop_value)
+                                                self.logger.debug(f"Set {candidate['name']} fixed property: {prop_name}={prop_value}")
+                                            except Exception as e_prop:
+                                                self.logger.warning(f"Failed to set fixed property {prop_name}={prop_value} on {candidate['name']}: {e_prop}")
+                                        else:
+                                            self.logger.warning(f"Fixed property '{prop_name}' not found on {candidate['name']}, but specified in candidate config.")
 
-                                # Set H.264 profile if specified (especially for nvh264enc)
-                                if "profile" in candidate["properties"] and candidate["properties"]["profile"] is not None:
-                                    profile_value = candidate["properties"]["profile"]
-                                    if temp_encoder.find_property("profile"):
-                                        try:
-                                            temp_encoder.set_property("profile", profile_value)
-                                            self.logger.debug(f"Set {candidate['name']} profile={profile_value} (0=Baseline for nvh264enc)")
-                                        except Exception as e_profile:
-                                            self.logger.warning(f"Failed to set profile {profile_value} on {candidate['name']}: {e_profile}")
-                                    elif candidate["name"] == "x264enc": # x264enc uses string for profile
-                                        # For x264enc, we'd set something like 'baseline' if desired
-                                        # but our candidate list currently has None for x264enc profile, so this won't trigger as is.
-                                        # Example: temp_encoder.set_property("profile", "baseline")
-                                        pass
+                                # Apply user-defined parameters using mappings
+                                param_map = candidate.get("param_mappings", {})
 
                                 if 'bitrate' in self.parsed_encoder_params:
                                     bitrate_kbps = int(self.parsed_encoder_params['bitrate'])
-                                    # Common property name for bitrate is 'bitrate'.
-                                    # Some encoders might use different names or require specific rate control modes to be set first.
-                                    # For nvh264enc, 'bitrate' is used for CBR/VBR target. For x264enc, 'bitrate' is target in kbps.
-                                    if temp_encoder.find_property("bitrate"):
-                                        temp_encoder.set_property("bitrate", bitrate_kbps) 
-                                        self.logger.debug(f"Set {candidate['name']} bitrate={bitrate_kbps} kbps for {self.stream_id}")
+                                    bitrate_prop_name = param_map.get("bitrate", "bitrate") # Default to "bitrate"
+                                    if temp_encoder.find_property(bitrate_prop_name):
+                                        temp_encoder.set_property(bitrate_prop_name, bitrate_kbps) 
+                                        self.logger.debug(f"Set {candidate['name']} {bitrate_prop_name}={bitrate_kbps} kbps for {self.stream_id}")
                                     else:
-                                        self.logger.warning(f"Property 'bitrate' not found on {candidate['name']}. Cannot set bitrate.")
+                                        self.logger.warning(f"Property '{bitrate_prop_name}' (for bitrate) not found on {candidate['name']}. Cannot set bitrate.")
                                         
                                 if 'gop_size' in self.parsed_encoder_params:
                                     gop_frames = int(self.parsed_encoder_params['gop_size'])
-                                    gop_prop_name = candidate["properties"].get("gop-size") or candidate["properties"].get("key-int-max") # Prioritize candidate's specific prop name
-
+                                    gop_prop_name = param_map.get("gop_size")
                                     if gop_prop_name and temp_encoder.find_property(gop_prop_name):
                                         temp_encoder.set_property(gop_prop_name, gop_frames) 
                                         self.logger.debug(f"Set {candidate['name']} {gop_prop_name}={gop_frames} frames for {self.stream_id}")
-                                    elif temp_encoder.find_property("key-int-max"): # Fallback to common name
-                                        temp_encoder.set_property("key-int-max", gop_frames)
-                                        self.logger.debug(f"Set {candidate['name']} key-int-max={gop_frames} (fallback property) for {self.stream_id}")
                                     else:
-                                        self.logger.warning(f"Could not find a suitable GOP size property on {candidate['name']}.")
+                                        # Fallback for x264enc if gop_size not explicitly mapped but key-int-max exists
+                                        if candidate["name"] == "x264enc" and temp_encoder.find_property("key-int-max") and not gop_prop_name:
+                                             temp_encoder.set_property("key-int-max", gop_frames)
+                                             self.logger.debug(f"Set {candidate['name']} key-int-max={gop_frames} (fallback GOP property) for {self.stream_id}")
+                                        elif gop_prop_name: # Mapped name was provided but not found on element
+                                             self.logger.warning(f"Property '{gop_prop_name}' (for gop_size) not found on {candidate['name']}.")
+                                        else: # No mapping and no standard fallback known here
+                                            self.logger.warning(f"Could not determine GOP size property for {candidate['name']} or it was not found.")
                                 
                                 self.encoder = temp_encoder
                                 selected_encoder_info = candidate
