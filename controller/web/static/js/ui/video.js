@@ -16,6 +16,7 @@ console.log("video.js loaded");
 let videoWs = null;
 let videoPlayer = null;
 let videoStatusCallback = null;
+let videoStreamingActive = false; // Flag to control reconnection behavior
 
 // Video statistics
 let frameCount = 0;
@@ -38,20 +39,63 @@ let stats = {
 
 function initVideo() {
     console.log('🎬 Initializing Video Streaming...');
+    
+    // Check if teleop tab is currently active
+    const teleopTab = document.getElementById('teleop');
+    if (!teleopTab || teleopTab.style.display === 'none') {
+        console.log('⚠️ Teleop tab not active, skipping video initialization');
+        return;
+    }
+    
+    // Set streaming as active
+    videoStreamingActive = true;
 
-    // Get video elements
-    videoPlayer = document.getElementById('video-player');
+    // Get video elements - handle case where video element was replaced with canvas
+    let videoElement = document.getElementById('video-player');
+    
+    // If video-player doesn't exist, it might have been replaced with a canvas
+    if (!videoElement) {
+        // Look for a canvas in the video container
+        const videoContainer = document.getElementById('video-container');
+        if (videoContainer) {
+            const canvas = videoContainer.querySelector('canvas');
+            if (canvas) {
+                console.log('🎨 Found existing canvas element, reusing it');
+                videoElement = canvas;
+                // Give it the video-player ID for consistency
+                canvas.id = 'video-player';
+            }
+        }
+    }
+    
+    videoPlayer = videoElement;
     const videoStatusDiv = document.getElementById('video-status');
 
+    console.log('🔍 Looking for video elements...');
+    console.log('videoPlayer:', videoPlayer);
+    console.log('videoStatusDiv:', videoStatusDiv);
+    console.log('teleopTab display:', teleopTab.style.display);
+    console.log('teleopTab offsetParent:', teleopTab.offsetParent);
+    console.log('document.readyState:', document.readyState);
+    
     debugLog('🔍 Looking for video elements...');
     debugLog('videoPlayer:', videoPlayer);
     debugLog('videoStatusDiv:', videoStatusDiv);
+    debugLog('teleopTab display:', teleopTab.style.display);
 
     if (!videoPlayer || !videoStatusDiv) {
         console.error("❌ Video UI elements not found!");
-        debugLog('Available elements with video in ID:');
+        console.log('videoPlayer:', videoPlayer);
+        console.log('videoStatusDiv:', videoStatusDiv);
+        console.log('Available elements with video in ID:');
         const videoElements = document.querySelectorAll('[id*="video"]');
-        videoElements.forEach(el => debugLog(`  - ${el.id}: ${el.tagName}`));
+        videoElements.forEach(el => console.log(`  - ${el.id}: ${el.tagName} (visible: ${el.offsetParent !== null}, display: ${getComputedStyle(el).display})`));
+        
+        // Also check all elements in teleop tab
+        const teleopElements = document.querySelectorAll('#teleop *[id]');
+        console.log('All elements with IDs in teleop tab:');
+        teleopElements.forEach(el => console.log(`  - ${el.id}: ${el.tagName}`));
+        
         return;
     }
 
@@ -78,11 +122,13 @@ function connectVideoWebSocket() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProtocol}//${window.location.host}/ws/video`;
     
+    console.log(`🔗 Connecting to Video WebSocket: ${wsUrl}`);
     debugLog(`🔗 Connecting to Video WebSocket: ${wsUrl}`);
     updateVideoStatus('Video: Connecting...', 'orange');
 
     // Close existing connection if any
     if (videoWs && videoWs.readyState !== WebSocket.CLOSED) {
+        console.log('🔄 Closing existing WebSocket connection');
         debugLog('🔄 Closing existing WebSocket connection');
         videoWs.close();
     }
@@ -103,9 +149,13 @@ function connectVideoWebSocket() {
             updateVideoStatus(`Video: Disconnected (${event.code})`, 'red');
             videoWs = null;
             
-            // Attempt to reconnect after a delay
-            debugLog('⏰ Scheduling reconnection in 5 seconds...');
-            setTimeout(connectVideoWebSocket, 5000);
+            // Only attempt to reconnect if streaming is still active
+            if (videoStreamingActive) {
+                debugLog('⏰ Scheduling reconnection in 5 seconds...');
+                setTimeout(connectVideoWebSocket, 5000);
+            } else {
+                debugLog('🛑 Video streaming inactive - not reconnecting');
+            }
         };
 
         videoWs.onerror = (error) => {
@@ -149,6 +199,7 @@ function initWebCodecsDecoder() {
     let canvas = videoPlayer;
     if (!canvas || canvas.tagName !== 'CANVAS') {
         canvas = document.createElement('canvas');
+        canvas.id = 'video-player'; // Ensure it has the proper ID
         canvas.width = 320;
         canvas.height = 240;
         canvas.style.width = '100%';
@@ -160,6 +211,7 @@ function initWebCodecsDecoder() {
             videoPlayer.parentNode.replaceChild(canvas, videoPlayer);
         }
         videoPlayer = canvas;
+        console.log('🎨 Created new canvas element with ID video-player');
     }
     
     const ctx = canvas.getContext('2d');
@@ -541,7 +593,61 @@ function updateVideoInfo(currentFps, frameSize) {
     // Video info is set once in initializeVideoInfoDisplay()
 }
 
-// Export function for main.js to call
-window.initVideo = initVideo;
+function cleanupVideo() {
+    console.log('🧹 Cleaning up Video Streaming resources...');
+    
+    // Mark streaming as inactive to prevent reconnection
+    videoStreamingActive = false;
+    
+    // Close WebSocket connection
+    if (videoWs && videoWs.readyState !== WebSocket.CLOSED) {
+        console.log('🔌 Closing video WebSocket connection');
+        videoWs.close();
+        videoWs = null;
+    }
+    
+    // Close VideoDecoder
+    if (window.videoDecoder && window.videoDecoder.state !== 'closed') {
+        console.log('🎬 Closing VideoDecoder');
+        try {
+            window.videoDecoder.close();
+        } catch (e) {
+            console.warn('⚠️ Error closing VideoDecoder:', e);
+        }
+        window.videoDecoder = null;
+    }
+    
+    // Clear frame buffer
+    frameBuffer = [];
+    waitingForKeyFrame = true;
+    
+    // Reset statistics
+    frameCount = 0;
+    lastFrameTime = 0;
+    fps = 0;
+    stats = {
+        framesReceived: 0,
+        framesDecoded: 0,
+        decodeErrors: 0,
+        keyFrames: 0,
+        totalFrameSize: 0,
+        lastStatsUpdate: 0
+    };
+    
+    // Update UI to show disconnected state
+    updateVideoStatus('Video: Disconnected', 'red');
+    
+    // Clear video display (if canvas)
+    if (videoPlayer && videoPlayer.tagName === 'CANVAS') {
+        const ctx = videoPlayer.getContext('2d');
+        ctx.clearRect(0, 0, videoPlayer.width, videoPlayer.height);
+    }
+    
+    console.log('✅ Video streaming cleanup completed');
+}
 
-debugLog('🔧 initVideo function exported to window'); 
+// Export functions for main.js to call
+window.initVideo = initVideo;
+window.cleanupVideo = cleanupVideo;
+
+debugLog('🔧 initVideo and cleanupVideo functions exported to window'); 

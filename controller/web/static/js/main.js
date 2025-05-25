@@ -46,24 +46,33 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('globalThis.initVideo type:', typeof globalThis.initVideo);
     console.log('All window properties with "init":', Object.keys(window).filter(key => key.includes('init')));
     
-    if (typeof initVideo === 'function') {
-        console.log('✅ Found initVideo function, calling it...');
-        try {
-            initVideo();
-        } catch (error) {
-            console.error('❌ Error calling initVideo:', error);
-        }
-    } else if (typeof window.initVideo === 'function') {
-        console.log('✅ Found window.initVideo function, calling it...');
-        try {
-            window.initVideo();
-        } catch (error) {
-            console.error('❌ Error calling window.initVideo:', error);
+    // Video initialization is now handled by tab switching logic
+    // Only initialize if teleop tab is the default active tab
+    const teleopTab = document.getElementById('teleop');
+    const isDefaultActive = teleopTab && teleopTab.style.display !== 'none';
+    
+    if (isDefaultActive) {
+        if (typeof initVideo === 'function') {
+            console.log('✅ Found initVideo function, calling it for default tab...');
+            try {
+                initVideo();
+            } catch (error) {
+                console.error('❌ Error calling initVideo:', error);
+            }
+        } else if (typeof window.initVideo === 'function') {
+            console.log('✅ Found window.initVideo function, calling it for default tab...');
+            try {
+                window.initVideo();
+            } catch (error) {
+                console.error('❌ Error calling window.initVideo:', error);
+            }
+        } else {
+            console.error("❌ initVideo function not found in js/ui/video.js");
+            console.log('Available functions:', Object.keys(window).filter(key => key.includes('init')));
+            console.log('All window properties:', Object.keys(window).slice(0, 20));
         }
     } else {
-        console.error("❌ initVideo function not found in js/ui/video.js");
-        console.log('Available functions:', Object.keys(window).filter(key => key.includes('init')));
-        console.log('All window properties:', Object.keys(window).slice(0, 20));
+        console.log('📺 Teleop tab not active on load, video initialization deferred to tab switching');
     }
 
     console.log("Initialization complete.");

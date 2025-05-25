@@ -29,6 +29,21 @@ function initTabs() {
 
 function openTab(event, tabName) {
     console.log(`Switching to tab: ${tabName}`);
+    
+    // Get the currently active tab before switching
+    const currentActiveTab = document.querySelector('.tab-content[style*="block"]');
+    const currentTabName = currentActiveTab ? currentActiveTab.id : null;
+    
+    // Handle cleanup when leaving teleop tab
+    if (currentTabName === 'teleop' && tabName !== 'teleop') {
+        console.log('🧹 Leaving teleop tab - cleaning up video resources');
+        if (typeof window.cleanupVideo === 'function') {
+            window.cleanupVideo();
+        } else {
+            console.warn('cleanupVideo function not available');
+        }
+    }
+    
     // Get all elements with class="tab-content" and hide them
     const tabContents = document.querySelectorAll('.tab-content');
     tabContents.forEach(tabContent => {
@@ -59,13 +74,30 @@ function openTab(event, tabName) {
         }
     }
 
-     // Optional: Trigger actions when a tab becomes active
+     // Handle tab-specific initialization
      if (tabName === 'config') {
          // Automatically load config when config tab is opened
          if (typeof loadConfigIntoTextArea === 'function') {
              loadConfigIntoTextArea();
          } else {
              console.warn("loadConfigIntoTextArea function not found in config.js - cannot auto-load.");
+         }
+     } else if (tabName === 'teleop') {
+         // Reinitialize video when returning to teleop tab
+         console.log('🎬 Entering teleop tab - initializing video resources');
+         if (typeof window.initVideo === 'function') {
+             // Longer delay to ensure DOM is fully ready and visible
+             setTimeout(() => {
+                 console.log('🔄 Attempting to reinitialize video...');
+                 try {
+                     window.initVideo();
+                     console.log('✅ Video reinitialization completed');
+                 } catch (error) {
+                     console.error('❌ Error reinitializing video:', error);
+                 }
+             }, 250); // Increased delay
+         } else {
+             console.warn('initVideo function not available');
          }
      }
 } 
