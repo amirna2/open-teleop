@@ -26,6 +26,12 @@ from gi.repository import Gst, GLib
 class GstPipeline:
     """Manages a GStreamer pipeline for video encoding."""
     
+    H264_ENCODER_CANDIDATES = [
+        # For nvh264enc, profile: 0=Baseline, 1=Constrained Baseline, 2=Main, 3=High
+        {"name": "nvh264enc", "type": "hardware", "properties": {"tune": "zerolatency", "profile": 0, "gop-size": "key-int-max"}},
+        {"name": "x264enc", "type": "software", "properties": {"tune": "zerolatency", "profile": None, "key-int-max": "key-int-max"}} # x264enc profile is a string like 'baseline'
+    ]
+
     def __init__(self, logger, stream_id, input_topic, output_topic, encoding_format, encoder_params=None):
         self.logger = logger
         self.stream_id = stream_id
@@ -56,6 +62,7 @@ class GstPipeline:
         self.caps_set = False
         self.width = 0
         self.height = 0
+        self.h264parser = None # Initialize h264parser
         
         self._create_pipeline()
     
@@ -67,32 +74,90 @@ class GstPipeline:
             self.appsrc = Gst.ElementFactory.make("appsrc", f"appsrc_{self.stream_id}")
             videoconvert = Gst.ElementFactory.make("videoconvert", f"vconv_{self.stream_id}")
             
+            selected_encoder_info = None
+            self.encoder = None
+
             if self.encoding_format == "video/h264":
-                self.encoder = Gst.ElementFactory.make("x264enc", f"enc_{self.stream_id}")
-                if self.encoder:
-                     self.encoder.set_property("tune", "zerolatency") 
-                     self.logger.debug(f"Set x264enc tune=zerolatency for {self.stream_id}")
-                     
-                     if 'bitrate' in self.parsed_encoder_params:
-                         bitrate_kbps = int(self.parsed_encoder_params['bitrate'])
-                         self.encoder.set_property("bitrate", bitrate_kbps)
-                         self.logger.debug(f"Set x264enc bitrate={bitrate_kbps} kbps for {self.stream_id}")
-                         
-                     if 'gop_size' in self.parsed_encoder_params:
-                         gop_frames = int(self.parsed_encoder_params['gop_size'])
-                         self.encoder.set_property("key-int-max", gop_frames) 
-                         self.logger.debug(f"Set x264enc key-int-max={gop_frames} frames for {self.stream_id}")
-                     
-                     # TODO: Implement transcoding based on config parameters.
-                     # The current pipeline encodes at the input ROS message resolution/framerate.
-                     # To enforce output width/height/framerate from parsed_encoder_params,
-                     # we would need to insert and configure:
-                     # - videoscale: For resizing based on parsed_encoder_params['width']/['height']
-                     # - videorate: For changing framerate based on parsed_encoder_params['framerate']
-                     # - capsfilter: After scale/rate elements to enforce the desired output caps before the encoder.
-                     # Example structure: ... ! videoconvert ! videoscale ! videorate ! capsfilter ! x264enc ! ...
-                else:
-                    raise RuntimeError(f"Failed to create x264enc encoder for {self.stream_id}")
+                for candidate in self.H264_ENCODER_CANDIDATES:
+                    factory = Gst.ElementFactory.find(candidate["name"])
+                    if factory:
+                        self.logger.info(f"Attempting to use encoder: {candidate['name']} ({candidate['type']}) for stream {self.stream_id}")
+                        temp_encoder = Gst.ElementFactory.make(candidate["name"], f"enc_{self.stream_id}")
+                        if temp_encoder:
+                            try:
+                                # Set common tune property if defined for the candidate
+                                if "tune" in candidate["properties"] and candidate["properties"]["tune"]:
+                                    tune_value = candidate["properties"]["tune"]
+                                    if temp_encoder.find_property("tune"): # GObject.ParamSpec
+                                        temp_encoder.set_property("tune", tune_value)
+                                        self.logger.debug(f"Set {candidate['name']} tune={tune_value}")
+                                    else:
+                                        self.logger.warning(f"Property 'tune' not found on {candidate['name']}, but specified in candidate config.")
+
+                                # Set H.264 profile if specified (especially for nvh264enc)
+                                if "profile" in candidate["properties"] and candidate["properties"]["profile"] is not None:
+                                    profile_value = candidate["properties"]["profile"]
+                                    if temp_encoder.find_property("profile"):
+                                        try:
+                                            temp_encoder.set_property("profile", profile_value)
+                                            self.logger.debug(f"Set {candidate['name']} profile={profile_value} (0=Baseline for nvh264enc)")
+                                        except Exception as e_profile:
+                                            self.logger.warning(f"Failed to set profile {profile_value} on {candidate['name']}: {e_profile}")
+                                    elif candidate["name"] == "x264enc": # x264enc uses string for profile
+                                        # For x264enc, we'd set something like 'baseline' if desired
+                                        # but our candidate list currently has None for x264enc profile, so this won't trigger as is.
+                                        # Example: temp_encoder.set_property("profile", "baseline")
+                                        pass
+
+                                if 'bitrate' in self.parsed_encoder_params:
+                                    bitrate_kbps = int(self.parsed_encoder_params['bitrate'])
+                                    # Common property name for bitrate is 'bitrate'.
+                                    # Some encoders might use different names or require specific rate control modes to be set first.
+                                    # For nvh264enc, 'bitrate' is used for CBR/VBR target. For x264enc, 'bitrate' is target in kbps.
+                                    if temp_encoder.find_property("bitrate"):
+                                        temp_encoder.set_property("bitrate", bitrate_kbps) 
+                                        self.logger.debug(f"Set {candidate['name']} bitrate={bitrate_kbps} kbps for {self.stream_id}")
+                                    else:
+                                        self.logger.warning(f"Property 'bitrate' not found on {candidate['name']}. Cannot set bitrate.")
+                                        
+                                if 'gop_size' in self.parsed_encoder_params:
+                                    gop_frames = int(self.parsed_encoder_params['gop_size'])
+                                    gop_prop_name = candidate["properties"].get("gop-size") or candidate["properties"].get("key-int-max") # Prioritize candidate's specific prop name
+
+                                    if gop_prop_name and temp_encoder.find_property(gop_prop_name):
+                                        temp_encoder.set_property(gop_prop_name, gop_frames) 
+                                        self.logger.debug(f"Set {candidate['name']} {gop_prop_name}={gop_frames} frames for {self.stream_id}")
+                                    elif temp_encoder.find_property("key-int-max"): # Fallback to common name
+                                        temp_encoder.set_property("key-int-max", gop_frames)
+                                        self.logger.debug(f"Set {candidate['name']} key-int-max={gop_frames} (fallback property) for {self.stream_id}")
+                                    else:
+                                        self.logger.warning(f"Could not find a suitable GOP size property on {candidate['name']}.")
+                                
+                                self.encoder = temp_encoder
+                                selected_encoder_info = candidate
+                                self.logger.info(f"Successfully created and configured encoder: {candidate['name']} for stream {self.stream_id}")
+                                break # Found and configured an encoder
+                            except Exception as e:
+                                self.logger.warning(f"Failed to configure {candidate['name']} for stream {self.stream_id}: {e}. Trying next.")
+                                if temp_encoder:
+                                    # temp_encoder.set_state(Gst.State.NULL) # Risky if not part of pipeline yet
+                                    pass # Element will be garbage collected if not assigned to self.encoder
+                                self.encoder = None 
+                        else:
+                            self.logger.warning(f"Found factory for {candidate['name']}, but Gst.ElementFactory.make() failed for stream {self.stream_id}.")
+                    else:
+                        self.logger.debug(f"Encoder factory not found for {candidate['name']}. Skipping.")
+
+                if not self.encoder:
+                    self.logger.error(f"Failed to create any suitable H.264 encoder for stream {self.stream_id} after trying all candidates ({[c['name'] for c in self.H264_ENCODER_CANDIDATES]}).")
+                    raise RuntimeError(f"No H264 encoder could be initialized for {self.stream_id}")
+                
+                # Create and configure h264parse if H264 encoding is used
+                self.h264parser = Gst.ElementFactory.make("h264parse", f"parse_{self.stream_id}")
+                if not self.h264parser:
+                    raise RuntimeError(f"Failed to create h264parse element for {self.stream_id}")
+                self.h264parser.set_property("config-interval", -1) # Send SPS/PPS with every IDR frame
+                self.logger.debug(f"Created and configured h264parse for {self.stream_id}")
             else:
                 raise NotImplementedError(f"Encoding format '{self.encoding_format}' is not supported yet.")
 
@@ -111,14 +176,26 @@ class GstPipeline:
             self.pipeline.add(self.appsrc)
             self.pipeline.add(videoconvert)
             self.pipeline.add(self.encoder)
+            if self.h264parser: # Add h264parser if it was created (i.e. for H264)
+                self.pipeline.add(self.h264parser)
             self.pipeline.add(self.appsink)
 
             if not self.appsrc.link(videoconvert):
                 raise RuntimeError(f"Failed to link appsrc to videoconvert for {self.stream_id}")
-            if not videoconvert.link(self.encoder):
-                raise RuntimeError(f"Failed to link videoconvert to encoder for {self.stream_id}")
-            if not self.encoder.link(self.appsink):
-                raise RuntimeError(f"Failed to link encoder to appsink for {self.stream_id}")
+            
+            last_element_before_appsink = videoconvert
+            if self.encoder:
+                if not last_element_before_appsink.link(self.encoder):
+                     raise RuntimeError(f"Failed to link {last_element_before_appsink.get_name()} to encoder for {self.stream_id}")
+                last_element_before_appsink = self.encoder
+
+            if self.h264parser:
+                if not last_element_before_appsink.link(self.h264parser):
+                    raise RuntimeError(f"Failed to link {last_element_before_appsink.get_name()} to h264parse for {self.stream_id}")
+                last_element_before_appsink = self.h264parser
+            
+            if not last_element_before_appsink.link(self.appsink):
+                raise RuntimeError(f"Failed to link {last_element_before_appsink.get_name()} to appsink for {self.stream_id}")
                 
             self.logger.info(f"GStreamer elements linked successfully for {self.stream_id}")
             
