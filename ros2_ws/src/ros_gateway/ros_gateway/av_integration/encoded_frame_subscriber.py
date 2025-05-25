@@ -9,8 +9,8 @@ from open_teleop_msgs.msg import EncodedFrame
 from open_teleop_msgs.srv import ManageStream, GetStatus
 
 # Import the generated FlatBuffer code
-from ros_gateway.flatbuffers.open_teleop.message import ContentType, OttMessage
-# Import builder functions DIRECTLY from the OttMessage module file
+from ros_gateway.flatbuffers.open_teleop.message import ContentType
+from ros_gateway.flatbuffers.open_teleop.message.FrameType import FrameType
 from ros_gateway.flatbuffers.open_teleop.message.OttMessage import (
     OttMessageStart,
     OttMessageAddVersion,
@@ -18,7 +18,19 @@ from ros_gateway.flatbuffers.open_teleop.message.OttMessage import (
     OttMessageAddContentType,
     OttMessageAddOtt,
     OttMessageAddTimestampNs,
+    OttMessageAddVideoMetadata,
     OttMessageEnd
+)
+from ros_gateway.flatbuffers.open_teleop.message.VideoFrameMetadata import (
+    VideoFrameMetadataStart,
+    VideoFrameMetadataAddSequenceNumber,
+    VideoFrameMetadataAddOriginalTimestampNs,
+    VideoFrameMetadataAddFrameType,
+    VideoFrameMetadataAddEncodingFormat,
+    VideoFrameMetadataAddWidth,
+    VideoFrameMetadataAddHeight,
+    VideoFrameMetadataAddFrameId,
+    VideoFrameMetadataEnd
 )
 
 class EncodedFrameSubscriber:
@@ -39,6 +51,9 @@ class EncodedFrameSubscriber:
         self.node = node
         self.zmq_client = zmq_client
         self.logger = logger or node.get_logger()
+        
+        # Sequence number tracking per stream
+        self.sequence_numbers = {}  # Key: ott_topic, Value: current sequence number
         
         # Create subscription to AV node's encoded frame topic
         self.logger.info("Creating subscription to encoded frames topic...")
@@ -99,6 +114,13 @@ class EncodedFrameSubscriber:
         self.streams = {}  # To track configured streams
         self.logger.info("EncodedFrameSubscriber initialized (client creation attempted).")
     
+    def _get_next_sequence_number(self, ott_topic):
+        """Get the next sequence number for a given stream."""
+        if ott_topic not in self.sequence_numbers:
+            self.sequence_numbers[ott_topic] = 0
+        self.sequence_numbers[ott_topic] += 1
+        return self.sequence_numbers[ott_topic]
+    
     def handle_encoded_frame(self, msg):
         """
         Handle an EncodedFrame message from the AV node.
@@ -109,14 +131,40 @@ class EncodedFrameSubscriber:
         self.logger.debug(f"Received EncodedFrame for OTT topic: {msg.ott_topic}")
         
         try:
-            # Get current timestamp in nanoseconds
-            timestamp_ns = self.node.get_clock().now().nanoseconds
+            # Get current timestamp in nanoseconds (Gateway processing time)
+            gateway_timestamp_ns = self.node.get_clock().now().nanoseconds
             
-            # Create OTT FlatBuffer message
-            builder = flatbuffers.Builder(1024 + len(msg.data))  # Pre-allocate enough space for the data
+            # Extract metadata from EncodedFrame
+            original_timestamp_ns = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+            sequence_number = self._get_next_sequence_number(msg.ott_topic)
+            frame_id = msg.header.frame_id if msg.header.frame_id else ""
             
-            # Create the OTT topic string
+            # Map ROS frame type to FlatBuffer frame type
+            if msg.frame_type == EncodedFrame.FRAME_TYPE_KEY:
+                fb_frame_type = FrameType.FRAME_TYPE_KEY
+            elif msg.frame_type == EncodedFrame.FRAME_TYPE_DELTA:
+                fb_frame_type = FrameType.FRAME_TYPE_DELTA
+            else:
+                fb_frame_type = FrameType.FRAME_TYPE_UNKNOWN
+            
+            # Create OTT FlatBuffer message with metadata
+            builder = flatbuffers.Builder(1024 + len(msg.data))
+            
+            # Create string fields
             ott_fb = builder.CreateString(msg.ott_topic)
+            encoding_format_fb = builder.CreateString(msg.encoding_format)
+            frame_id_fb = builder.CreateString(frame_id)
+            
+            # Create VideoFrameMetadata
+            VideoFrameMetadataStart(builder)
+            VideoFrameMetadataAddSequenceNumber(builder, sequence_number)
+            VideoFrameMetadataAddOriginalTimestampNs(builder, original_timestamp_ns)
+            VideoFrameMetadataAddFrameType(builder, fb_frame_type)
+            VideoFrameMetadataAddEncodingFormat(builder, encoding_format_fb)
+            VideoFrameMetadataAddWidth(builder, msg.width)
+            VideoFrameMetadataAddHeight(builder, msg.height)
+            VideoFrameMetadataAddFrameId(builder, frame_id_fb)
+            video_metadata = VideoFrameMetadataEnd(builder)
             
             # Create the payload byte vector
             payload = builder.CreateByteVector(bytes(msg.data))
@@ -127,7 +175,8 @@ class EncodedFrameSubscriber:
             OttMessageAddPayload(builder, payload)
             OttMessageAddContentType(builder, ContentType.ENCODED_VIDEO_FRAME)
             OttMessageAddOtt(builder, ott_fb)
-            OttMessageAddTimestampNs(builder, timestamp_ns)
+            OttMessageAddTimestampNs(builder, gateway_timestamp_ns)
+            OttMessageAddVideoMetadata(builder, video_metadata)
             
             # Finish the message
             message = OttMessageEnd(builder)
@@ -137,7 +186,9 @@ class EncodedFrameSubscriber:
             buf = builder.Output()
             
             # Send to controller
-            self.logger.debug(f"Sending encoded frame ({len(buf)} bytes) for {msg.ott_topic}")
+            self.logger.debug(f"Sending encoded frame ({len(buf)} bytes) for {msg.ott_topic} "
+                            f"[seq={sequence_number}, type={'KEY' if fb_frame_type == FrameType.FRAME_TYPE_KEY else 'DELTA'}, "
+                            f"{msg.width}x{msg.height}, {msg.encoding_format}]")
             reply_str = self.zmq_client.send_request_binary(buf)
             
             # Log the reply (or lack thereof)
