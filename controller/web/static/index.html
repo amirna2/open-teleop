@@ -31,6 +31,22 @@
         <div id="status">
             Status: Disconnected
         </div>
+        
+        <!-- Video Stream Section -->
+        <div id="video-section">
+            <h3>Video Stream</h3>
+            <div id="video-container">
+                <video id="video-player" controls muted autoplay playsinline>
+                    Your browser does not support the video tag.
+                </video>
+                <div id="video-status">Video: Disconnected</div>
+                <div id="video-info">
+                    <span id="video-resolution">Resolution: --</span>
+                    <span id="video-fps">FPS: --</span>
+                    <span id="video-codec">Codec: --</span>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div id="config" class="tab-content">
@@ -43,12 +59,14 @@
     </div>
 
     <!-- Core libraries (if any) first -->
-    <!-- e.g. <script src="js/vendor/nipplejs.min.js"></script> -->
+    <!-- FlatBuffers library for video message parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/flatbuffers@25.2.10/js/flatbuffers.min.js"></script>
 
     <!-- API and UI Component Scripts -->
     <script src="js/api.js"></script>
     <script src="js/ui/tabs.js"></script>
     <script src="js/ui/teleop.js"></script>
+    <script src="js/ui/video.js"></script>
     <!-- Add js-yaml library for validation -->
     <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
     <script src="js/ui/config.js"></script>

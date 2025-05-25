@@ -8,6 +8,7 @@ SCHEMAS_DIR="$(dirname "$(dirname "$0")")/schemas"
 ROS2_OUTPUT_DIR="$(dirname "$(dirname "$0")")/ros2_ws/src/bridge_nodes"
 GO_OUTPUT_DIR="$(dirname "$(dirname "$0")")/controller/pkg/flatbuffers"
 ROS_GATEWAY_DIR="$(dirname "$(dirname "$0")")/ros2_ws/src/ros_gateway"
+JS_OUTPUT_DIR="$(dirname "$(dirname "$0")")/controller/web/static/js/flatbuffers"
 
 # Check FlatBuffers compiler
 if ! command -v flatc &> /dev/null; then
@@ -56,6 +57,7 @@ echo "Cleanup attempt finished."
 
 # Ensure output directories exist
 mkdir -p "$GO_OUTPUT_DIR"
+mkdir -p "$JS_OUTPUT_DIR"
 
 # First, process the OTT message schema which is common to all bridges
 OTT_SCHEMA="$SCHEMAS_DIR/ott_message.fbs"
@@ -66,6 +68,10 @@ if [ -f "$OTT_SCHEMA" ]; then
     echo "Generating Go code for OTT message..."
     mkdir -p "$GO_OUTPUT_DIR" 
     flatc --go -o "$GO_OUTPUT_DIR" "$OTT_SCHEMA"
+    
+    # Generate JavaScript code for web UI
+    echo "Generating JavaScript code for web UI..."
+    flatc --ts -o "$JS_OUTPUT_DIR" "$OTT_SCHEMA"
     
     # Generate Python code for ROS gateway
     if [ -d "$ROS_GATEWAY_DIR" ]; then
