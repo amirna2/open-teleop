@@ -1,5 +1,15 @@
 // UI Logic for Video Streaming (WebSocket + WebCodecs H.264 Decoder)
 
+// Debug configuration - Set VIDEO_DEBUG to true for verbose logging
+// This will show detailed frame processing, WebSocket events, and decoder state changes
+const VIDEO_DEBUG = false;
+
+function debugLog(...args) {
+    if (VIDEO_DEBUG) {
+        console.log(...args);
+    }
+}
+
 console.log("video.js loaded");
 
 // Video streaming state
@@ -12,6 +22,10 @@ let frameCount = 0;
 let lastFrameTime = 0;
 let fps = 0;
 
+// Frame buffering for key frame synchronization
+let frameBuffer = [];
+let waitingForKeyFrame = true;
+
 function initVideo() {
     console.log('🎬 Initializing Video Streaming...');
 
@@ -19,23 +33,23 @@ function initVideo() {
     videoPlayer = document.getElementById('video-player');
     const videoStatusDiv = document.getElementById('video-status');
 
-    console.log('🔍 Looking for video elements...');
-    console.log('videoPlayer:', videoPlayer);
-    console.log('videoStatusDiv:', videoStatusDiv);
+    debugLog('🔍 Looking for video elements...');
+    debugLog('videoPlayer:', videoPlayer);
+    debugLog('videoStatusDiv:', videoStatusDiv);
 
     if (!videoPlayer || !videoStatusDiv) {
         console.error("❌ Video UI elements not found!");
-        console.log('Available elements with video in ID:');
+        debugLog('Available elements with video in ID:');
         const videoElements = document.querySelectorAll('[id*="video"]');
-        videoElements.forEach(el => console.log(`  - ${el.id}: ${el.tagName}`));
+        videoElements.forEach(el => debugLog(`  - ${el.id}: ${el.tagName}`));
         return;
     }
 
-    console.log('✅ Video UI elements found successfully');
+    debugLog('✅ Video UI elements found successfully');
 
     // Register status update callback
     videoStatusCallback = (message, color) => {
-        console.log(`📺 Video Status Update: ${message} (${color})`);
+        debugLog(`📺 Video Status Update: ${message} (${color})`);
         videoStatusDiv.textContent = message;
         videoStatusDiv.style.color = color || 'black';
     };
@@ -46,7 +60,7 @@ function initVideo() {
     initWebCodecsDecoder();
 
     // Connect to video WebSocket
-    console.log('🔌 Starting WebSocket connection...');
+    debugLog('🔌 Starting WebSocket connection...');
     connectVideoWebSocket();
 }
 
@@ -54,12 +68,12 @@ function connectVideoWebSocket() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProtocol}//${window.location.host}/ws/video`;
     
-    console.log(`🔗 Connecting to Video WebSocket: ${wsUrl}`);
+    debugLog(`🔗 Connecting to Video WebSocket: ${wsUrl}`);
     updateVideoStatus('Video: Connecting...', 'orange');
 
     // Close existing connection if any
     if (videoWs && videoWs.readyState !== WebSocket.CLOSED) {
-        console.log('🔄 Closing existing WebSocket connection');
+        debugLog('🔄 Closing existing WebSocket connection');
         videoWs.close();
     }
 
@@ -67,20 +81,20 @@ function connectVideoWebSocket() {
         videoWs = new WebSocket(wsUrl);
         videoWs.binaryType = 'arraybuffer'; // Important for binary data
         
-        console.log('📡 WebSocket created, setting up event handlers...');
+        debugLog('📡 WebSocket created, setting up event handlers...');
 
         videoWs.onopen = () => {
-            console.log('✅ Video WebSocket connection opened successfully!');
+            console.log('✅ Video WebSocket connected');
             updateVideoStatus('Video: Connected', 'green');
         };
 
         videoWs.onclose = (event) => {
-            console.log(`❌ Video WebSocket connection closed: ${event.code} - ${event.reason}`);
+            console.log(`❌ Video WebSocket disconnected: ${event.code}`);
             updateVideoStatus(`Video: Disconnected (${event.code})`, 'red');
             videoWs = null;
             
             // Attempt to reconnect after a delay
-            console.log('⏰ Scheduling reconnection in 5 seconds...');
+            debugLog('⏰ Scheduling reconnection in 5 seconds...');
             setTimeout(connectVideoWebSocket, 5000);
         };
 
@@ -93,7 +107,7 @@ function connectVideoWebSocket() {
             handleVideoMessage(event.data);
         };
         
-        console.log('🎯 WebSocket event handlers set up successfully');
+        debugLog('🎯 WebSocket event handlers set up successfully');
         
     } catch (error) {
         console.error('💥 Failed to create WebSocket:', error);
@@ -109,15 +123,15 @@ function initWebCodecsDecoder() {
         return;
     }
 
-    console.log('🎬 Initializing WebCodecs H.264 decoder...');
+    debugLog('🎬 Initializing WebCodecs H.264 decoder...');
     
     // Close existing decoder if any
     if (window.videoDecoder && window.videoDecoder.state !== 'closed') {
-        console.log('🔄 Closing existing VideoDecoder...');
+        debugLog('🔄 Closing existing VideoDecoder...');
         try {
             window.videoDecoder.close();
         } catch (e) {
-            console.warn('⚠️ Error closing existing decoder:', e);
+            debugLog('⚠️ Error closing existing decoder:', e);
         }
     }
     
@@ -143,23 +157,29 @@ function initWebCodecsDecoder() {
     // Initialize VideoDecoder
     const decoder = new VideoDecoder({
         output: (frame) => {
-            console.log(`🎬 Decoded frame: ${frame.displayWidth}x${frame.displayHeight}`);
+            debugLog(`🎬 Decoded frame: ${frame.displayWidth}x${frame.displayHeight}`);
             
             // Draw frame to canvas
             ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
             frame.close();
             
-            updateVideoStatus(`Video: Streaming (${frameCount} frames)`, 'green');
+            // Don't update status here - it's handled in handleVideoMessage
         },
         error: (error) => {
             console.error('❌ VideoDecoder error:', error);
-            updateVideoStatus('Video: Decoder error', 'red');
+            
+            // Don't update status for every error to avoid UI spam
+            debugLog('🔄 Decoder error occurred, will reinitialize...');
+            
+            // Reset state and reinitialize
+            waitingForKeyFrame = true;
+            frameBuffer = [];
             
             // Try to reinitialize after a short delay
             setTimeout(() => {
-                console.log('🔄 Attempting to reinitialize decoder after error...');
+                debugLog('🔄 Attempting to reinitialize decoder after error...');
                 initWebCodecsDecoder();
-            }, 1000);
+            }, 500); // Shorter delay for faster recovery
         }
     });
     
@@ -176,6 +196,11 @@ function initWebCodecsDecoder() {
         
         // Store decoder for use in frame processing
         window.videoDecoder = decoder;
+        
+        // Reset frame buffering state
+        waitingForKeyFrame = true;
+        frameBuffer = [];
+        
         updateVideoStatus('Video: WebCodecs ready', 'orange');
         
     } catch (error) {
@@ -186,40 +211,94 @@ function initWebCodecsDecoder() {
 
 function decodeH264WithWebCodecs(h264Data) {
     if (!window.videoDecoder) {
-        console.error('❌ VideoDecoder not available');
+        debugLog('❌ VideoDecoder not available');
         return;
     }
     
     // Check decoder state
     if (window.videoDecoder.state === 'closed') {
-        console.warn('⚠️ VideoDecoder is closed, reinitializing...');
+        debugLog('⚠️ VideoDecoder is closed, reinitializing...');
         initWebCodecsDecoder();
-        return; // Skip this frame, decoder will be ready for next one
-    }
-    
-    if (window.videoDecoder.state !== 'configured') {
-        console.warn(`⚠️ VideoDecoder not ready (state: ${window.videoDecoder.state}), skipping frame`);
+        waitingForKeyFrame = true; // Reset key frame waiting
         return;
     }
     
+    if (window.videoDecoder.state !== 'configured') {
+        debugLog(`⚠️ VideoDecoder not ready (state: ${window.videoDecoder.state}), skipping frame`);
+        return;
+    }
+    
+    const isKey = isKeyFrame(h264Data);
+    
+    // If we're waiting for a key frame and this isn't one, buffer it
+    if (waitingForKeyFrame && !isKey) {
+        debugLog('⏳ Buffering delta frame while waiting for key frame');
+        frameBuffer.push(h264Data);
+        return;
+    }
+    
+    // If this is a key frame, we can start decoding
+    if (isKey && waitingForKeyFrame) {
+        debugLog('🔑 Key frame received, starting decode sequence');
+        waitingForKeyFrame = false;
+        
+        // Decode the key frame first
+        decodeFrame(h264Data, 'key');
+        
+        // Then decode any buffered frames
+        while (frameBuffer.length > 0) {
+            const bufferedFrame = frameBuffer.shift();
+            decodeFrame(bufferedFrame, 'delta');
+        }
+        return;
+    }
+    
+    // Normal decoding for subsequent frames
+    if (!waitingForKeyFrame) {
+        decodeFrame(h264Data, isKey ? 'key' : 'delta');
+    }
+}
+
+function decodeFrame(h264Data, frameType) {
     try {
-        // Create EncodedVideoChunk from H.264 data
+        // Additional validation before creating chunk
+        if (!h264Data || h264Data.length === 0) {
+            debugLog('⚠️ Empty H.264 data, skipping frame');
+            return;
+        }
+        
         const chunk = new EncodedVideoChunk({
-            type: isKeyFrame(h264Data) ? 'key' : 'delta',
+            type: frameType,
             timestamp: performance.now() * 1000, // Convert to microseconds
             data: h264Data
         });
         
-        console.log(`🎬 Decoding ${chunk.type} frame: ${h264Data.length} bytes (decoder state: ${window.videoDecoder.state})`);
+        debugLog(`🎬 Decoding ${frameType} frame: ${h264Data.length} bytes`);
         window.videoDecoder.decode(chunk);
         
     } catch (error) {
-        console.error('❌ Failed to decode H.264 frame:', error);
+        debugLog('❌ Failed to decode H.264 frame:', error);
+        
+        // If we get a DataError about key frames, reset and wait for next key frame
+        if (error.name === 'DataError' && error.message.includes('key frame')) {
+            debugLog('🔄 Key frame required, resetting decoder state...');
+            waitingForKeyFrame = true;
+            frameBuffer = [];
+            return;
+        }
+        
+        // For other DataErrors (corrupted frames), just skip and continue
+        if (error.name === 'DataError') {
+            debugLog('⚠️ Corrupted frame detected, skipping...');
+            return;
+        }
         
         // If decoder is in error state, try to reinitialize
         if (error.name === 'InvalidStateError') {
-            console.warn('🔄 Decoder in invalid state, reinitializing...');
+            debugLog('🔄 Decoder in invalid state, reinitializing...');
             initWebCodecsDecoder();
+            waitingForKeyFrame = true;
+            frameBuffer = [];
         }
     }
 }
@@ -233,6 +312,7 @@ function isKeyFrame(h264Data) {
             const nalType = h264Data[i+4] & 0x1F;
             // NAL types: 7=SPS, 8=PPS, 5=IDR (key frame)
             if (nalType === 5 || nalType === 7 || nalType === 8) {
+                debugLog(`🔑 Key frame detected (NAL type: ${nalType})`);
                 return true;
             }
         }
@@ -251,7 +331,7 @@ function handleVideoMessage(data) {
     }
     lastFrameTime = currentTime;
 
-    console.log(`📦 Received video frame #${frameCount}: ${data.byteLength} bytes`);
+    debugLog(`📦 Received video frame #${frameCount}: ${data.byteLength} bytes`);
     
     // Parse FlatBuffer to extract H.264 payload
     try {
@@ -261,45 +341,49 @@ function handleVideoMessage(data) {
         const h264Payload = extractH264FromFlatBuffer(uint8Array);
         
         if (h264Payload && h264Payload.length > 0) {
-            console.log(`🎬 Extracted H.264 payload: ${h264Payload.length} bytes`);
+            debugLog(`🎬 Extracted H.264 payload: ${h264Payload.length} bytes`);
             
             // Decode using WebCodecs
             if (window.videoDecoder) {
                 decodeH264WithWebCodecs(h264Payload);
             } else {
-                console.warn('⚠️ WebCodecs decoder not available');
+                debugLog('⚠️ WebCodecs decoder not available');
             }
         } else {
-            console.log(`⚠️ No H.264 payload found in FlatBuffer`);
+            debugLog(`⚠️ No H.264 payload found in FlatBuffer`);
         }
         
     } catch (error) {
         console.error('❌ Error processing video frame:', error);
     }
 
-    // Update UI
-    updateVideoStatus(`Video: Streaming (${frameCount} frames)`, 'green');
-    updateVideoInfo(fps, data.byteLength);
+    // Update UI only once when streaming starts to prevent any shaking
+    if (frameCount === 1) {
+        // One-time status update when streaming starts
+        updateVideoStatus('Video: Streaming', 'green');
+        // Initialize video info display once
+        initializeVideoInfoDisplay();
+    }
+    // No periodic updates during streaming to avoid DOM manipulation
 }
 
 function extractH264FromFlatBuffer(uint8Array) {
     try {
-        const buf = new flatbuffers.ByteBuffer(uint8Array);
+        // First try to find H.264 data using NAL unit search
+        const h264Data = findH264Data(uint8Array);
         
-        // Read the FlatBuffer root table (OttMessage)
-        const rootOffset = buf.readInt32(buf.position()) + buf.position();
-        buf.setPosition(rootOffset);
+        if (h264Data && h264Data.length > 4) {
+            // Validate that we have a complete NAL unit
+            if (isValidH264Data(h264Data)) {
+                return h264Data;
+            } else {
+                debugLog('⚠️ Invalid H.264 data detected, skipping frame');
+                return null;
+            }
+        }
         
-        // Read the vtable
-        const vtableOffset = buf.position() - buf.readInt16(buf.position());
-        const vtableLength = buf.readInt16(vtableOffset);
-        const tableLength = buf.readInt16(vtableOffset + 2);
-        
-        // Look for the payload field (field index varies, need to find it)
-        // This is a simplified approach - in production, use generated FlatBuffer code
-        
-        // For now, let's search for H.264 NAL unit start codes in the raw data
-        return findH264Data(uint8Array);
+        debugLog('⚠️ No valid H.264 data found in FlatBuffer');
+        return null;
         
     } catch (error) {
         console.error('❌ Error parsing FlatBuffer:', error);
@@ -307,12 +391,34 @@ function extractH264FromFlatBuffer(uint8Array) {
     }
 }
 
+function isValidH264Data(data) {
+    // Basic validation: check for proper NAL unit structure
+    if (data.length < 5) return false;
+    
+    // Check for start code (0x00 0x00 0x00 0x01 or 0x00 0x00 0x01)
+    let hasStartCode = false;
+    if (data[0] === 0x00 && data[1] === 0x00) {
+        if (data[2] === 0x00 && data[3] === 0x01) {
+            hasStartCode = true;
+        } else if (data[2] === 0x01) {
+            hasStartCode = true;
+        }
+    }
+    
+    if (!hasStartCode) {
+        debugLog('⚠️ H.264 data missing start code');
+        return false;
+    }
+    
+    return true;
+}
+
 function findH264Data(uint8Array) {
     // Look for H.264 NAL unit start codes
     for (let i = 0; i < uint8Array.length - 4; i++) {
         if ((uint8Array[i] === 0x00 && uint8Array[i+1] === 0x00 && uint8Array[i+2] === 0x00 && uint8Array[i+3] === 0x01) ||
             (uint8Array[i] === 0x00 && uint8Array[i+1] === 0x00 && uint8Array[i+2] === 0x01)) {
-            console.log(`🔍 Found H.264 NAL start code at offset ${i}`);
+            debugLog(`🔍 Found H.264 NAL start code at offset ${i}`);
             return uint8Array.slice(i);
         }
     }
@@ -325,36 +431,35 @@ function updateVideoStatus(message, color) {
     if (videoStatusCallback) {
         videoStatusCallback(message, color);
     } else {
-        console.log(`📺 Video Status: ${message}`);
+        debugLog(`📺 Video Status: ${message}`);
     }
 }
 
-function updateVideoInfo(currentFps, frameSize) {
+function initializeVideoInfoDisplay() {
+    // Set static video info once when streaming starts
     const resolutionSpan = document.getElementById('video-resolution');
     const fpsSpan = document.getElementById('video-fps');
     const codecSpan = document.getElementById('video-codec');
 
     if (resolutionSpan) {
-        resolutionSpan.textContent = `Frame Size: ${frameSize} bytes`;
+        resolutionSpan.textContent = `Resolution: 320x240`;
     }
     
     if (fpsSpan) {
-        fpsSpan.textContent = `FPS: ${currentFps || '--'}`;
+        fpsSpan.textContent = `FPS: ~24`;
     }
     
     if (codecSpan) {
-        codecSpan.textContent = `Frames: ${frameCount}`;
+        codecSpan.textContent = `Codec: H.264`;
     }
 }
 
-// Export function for main.js to call - ensure it's available globally
-window.initVideo = initVideo;
-
-// Also make it available without window prefix
-if (typeof globalThis !== 'undefined') {
-    globalThis.initVideo = initVideo;
+function updateVideoInfo(currentFps, frameSize) {
+    // This function is now unused during streaming to prevent shaking
+    // Video info is set once in initializeVideoInfoDisplay()
 }
 
-console.log('🔧 initVideo function exported to window and globalThis');
-console.log('🔧 typeof window.initVideo:', typeof window.initVideo);
-console.log('🔧 typeof initVideo:', typeof initVideo); 
+// Export function for main.js to call
+window.initVideo = initVideo;
+
+debugLog('🔧 initVideo function exported to window'); 
