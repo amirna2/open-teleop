@@ -40,7 +40,7 @@ topic_mappings:
     priority: "HIGH"
 
   # AV stream configurations
-  - ros_topic: "/test/image_prog"
+  - ros_topic: "/camera/image_raw"
     ott: "teleop.video.main_camera"
     topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0005"
     message_type: "sensor_msgs/msg/Image"
