@@ -490,7 +490,7 @@ class OpenTeleopAvNode(Node):
             callback = functools.partial(pipeline.ros_image_callback) 
             
             qos = QoSProfile(
-                reliability=QoSReliabilityPolicy.BEST_EFFORT,
+                reliability=QoSReliabilityPolicy.RELIABLE,
                 history=QoSHistoryPolicy.KEEP_LAST,
                 depth=1
             )

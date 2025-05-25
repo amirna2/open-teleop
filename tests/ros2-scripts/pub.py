@@ -551,8 +551,8 @@ class RosDataGenerator(Node):
         self.ball_radius = 20
         self.ball_dx = 10
         self.ball_dy = 10
-        self.image_width =  320
-        self.image_height = 240
+        self.image_width =  1920 
+        self.image_height = 1080 
 
 
         self.localization_generator = CoordinatedLocalizationGenerator(self)
