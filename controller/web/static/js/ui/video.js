@@ -26,6 +26,16 @@ let fps = 0;
 let frameBuffer = [];
 let waitingForKeyFrame = true;
 
+// Enhanced statistics tracking
+let stats = {
+    framesReceived: 0,
+    framesDecoded: 0,
+    decodeErrors: 0,
+    keyFrames: 0,
+    totalFrameSize: 0,
+    lastStatsUpdate: 0
+};
+
 function initVideo() {
     console.log('🎬 Initializing Video Streaming...');
 
@@ -159,6 +169,9 @@ function initWebCodecsDecoder() {
         output: (frame) => {
             debugLog(`🎬 Decoded frame: ${frame.displayWidth}x${frame.displayHeight}`);
             
+            // Track successful decode
+            stats.framesDecoded++;
+            
             // Draw frame to canvas
             ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
             frame.close();
@@ -167,6 +180,9 @@ function initWebCodecsDecoder() {
         },
         error: (error) => {
             console.error('❌ VideoDecoder error:', error);
+            
+            // Track decoder errors
+            stats.decodeErrors++;
             
             // Don't update status for every error to avoid UI spam
             debugLog('🔄 Decoder error occurred, will reinitialize...');
@@ -290,6 +306,7 @@ function decodeFrame(h264Data, frameType) {
         // For other DataErrors (corrupted frames), just skip and continue
         if (error.name === 'DataError') {
             debugLog('⚠️ Corrupted frame detected, skipping...');
+            stats.decodeErrors++;
             return;
         }
         
@@ -322,6 +339,8 @@ function isKeyFrame(h264Data) {
 
 function handleVideoMessage(data) {
     frameCount++;
+    stats.framesReceived++;
+    stats.totalFrameSize += data.byteLength;
     
     // Update FPS calculation
     const currentTime = Date.now();
@@ -343,18 +362,26 @@ function handleVideoMessage(data) {
         if (h264Payload && h264Payload.length > 0) {
             debugLog(`🎬 Extracted H.264 payload: ${h264Payload.length} bytes`);
             
+            // Check if this is a key frame for statistics
+            if (isKeyFrame(h264Payload)) {
+                stats.keyFrames++;
+            }
+            
             // Decode using WebCodecs
             if (window.videoDecoder) {
                 decodeH264WithWebCodecs(h264Payload);
             } else {
                 debugLog('⚠️ WebCodecs decoder not available');
+                stats.decodeErrors++;
             }
         } else {
             debugLog(`⚠️ No H.264 payload found in FlatBuffer`);
+            stats.decodeErrors++;
         }
         
     } catch (error) {
         console.error('❌ Error processing video frame:', error);
+        stats.decodeErrors++;
     }
 
     // Update UI only once when streaming starts to prevent any shaking
@@ -364,7 +391,9 @@ function handleVideoMessage(data) {
         // Initialize video info display once
         initializeVideoInfoDisplay();
     }
-    // No periodic updates during streaming to avoid DOM manipulation
+    
+    // Update statistics (throttled to once per second)
+    updateVideoStats();
 }
 
 function extractH264FromFlatBuffer(uint8Array) {
@@ -438,19 +467,72 @@ function updateVideoStatus(message, color) {
 function initializeVideoInfoDisplay() {
     // Set static video info once when streaming starts
     const resolutionSpan = document.getElementById('video-resolution');
-    const fpsSpan = document.getElementById('video-fps');
     const codecSpan = document.getElementById('video-codec');
 
     if (resolutionSpan) {
         resolutionSpan.textContent = `Resolution: 320x240`;
     }
     
-    if (fpsSpan) {
-        fpsSpan.textContent = `FPS: ~24`;
-    }
-    
     if (codecSpan) {
         codecSpan.textContent = `Codec: H.264`;
+    }
+}
+
+function updateVideoStats() {
+    // Update statistics display (throttled to avoid UI shaking)
+    const currentTime = Date.now();
+    if (currentTime - stats.lastStatsUpdate < 1000) {
+        return; // Update only once per second
+    }
+    stats.lastStatsUpdate = currentTime;
+
+    const framesElement = document.getElementById('stats-frames');
+    const decodedElement = document.getElementById('stats-decoded');
+    const errorsElement = document.getElementById('stats-errors');
+    const errorRateElement = document.getElementById('stats-error-rate');
+    const fpsElement = document.getElementById('stats-fps');
+    const frameSizeElement = document.getElementById('stats-frame-size');
+    const keyFramesElement = document.getElementById('stats-key-frames');
+
+    if (framesElement) {
+        framesElement.textContent = stats.framesReceived.toLocaleString();
+    }
+    
+    if (decodedElement) {
+        decodedElement.textContent = stats.framesDecoded.toLocaleString();
+    }
+    
+    if (errorsElement) {
+        errorsElement.textContent = stats.decodeErrors.toLocaleString();
+    }
+    
+    if (errorRateElement) {
+        const errorRate = stats.framesReceived > 0 ? 
+            ((stats.decodeErrors / stats.framesReceived) * 100).toFixed(1) : '0.0';
+        errorRateElement.textContent = `${errorRate}%`;
+        
+        // Color code the error rate
+        if (parseFloat(errorRate) > 5) {
+            errorRateElement.style.color = '#dc3545'; // Red for high error rate
+        } else if (parseFloat(errorRate) > 1) {
+            errorRateElement.style.color = '#fd7e14'; // Orange for medium error rate
+        } else {
+            errorRateElement.style.color = '#28a745'; // Green for low error rate
+        }
+    }
+    
+    if (fpsElement) {
+        fpsElement.textContent = fps ? fps.toFixed(1) : '--';
+    }
+    
+    if (frameSizeElement) {
+        const avgSize = stats.framesReceived > 0 ? 
+            Math.round(stats.totalFrameSize / stats.framesReceived) : 0;
+        frameSizeElement.textContent = `${avgSize.toLocaleString()} bytes`;
+    }
+    
+    if (keyFramesElement) {
+        keyFramesElement.textContent = stats.keyFrames.toLocaleString();
     }
 }
 
