@@ -1,734 +1,469 @@
-// UI Logic for Video Streaming (WebSocket + WebCodecs H.264 Decoder)
+// video.js – WebCodecs H.264 Player (Complete)
 
-// Debug configuration - Set VIDEO_DEBUG to true for verbose logging
-// This will show detailed frame processing, WebSocket events, and decoder state changes
-const VIDEO_DEBUG = false;
-
+// Keep your original debug toggle
+const VIDEO_DEBUG = true;
 function debugLog(...args) {
-    if (VIDEO_DEBUG) {
-        console.log(...args);
-    }
+  if (VIDEO_DEBUG) console.log(...args);
 }
 
 debugLog("video.js loaded");
 
-// Video streaming state
 let videoWs = null;
-let videoPlayer = null;
-let videoStatusCallback = null;
-let videoStreamingActive = false; // Flag to control reconnection behavior
+let decoder = null;
+let canvas = null;
+let ctx = null;
+let videoStreamingActive = false;
 
-// Video statistics
 let frameCount = 0;
-let lastFrameTime = 0;
 let fps = 0;
-
-// Frame buffering for key frame synchronization
-let frameBuffer = [];
-let waitingForKeyFrame = true;
-
-// Enhanced statistics tracking
+let lastFrameTime = 0;
 let stats = {
+  framesReceived: 0,
+  framesDecoded: 0,
+  decodeErrors: 0,
+  keyFrames: 0,
+  totalFrameSize: 0,
+  lastStatsUpdate: 0
+};
+
+let spsData = null;
+let ppsData = null;
+let decoderConfigured = false;
+
+function isKeyFrame(uint8Array) {
+  // Look for IDR (0x65) or SPS (0x67) 
+  for (let i = 0; i < uint8Array.length - 4; i++) {
+    if (uint8Array[i] === 0x00 && uint8Array[i+1] === 0x00 && 
+        uint8Array[i+2] === 0x00 && uint8Array[i+3] === 0x01) {
+      const nalType = uint8Array[i+4] & 0x1F;
+      if (nalType === 5 || nalType === 7) { // IDR or SPS
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ——————————————————————————
+// 1️⃣ initVideo (called by main.js)
+// ——————————————————————————
+function initVideo() {
+  debugLog("Initializing Video with WebCodecs…");
+
+  videoStreamingActive = true;
+  const videoElement = document.getElementById("video-player");
+  if (!videoElement) {
+    console.error('❌ <video id="video-player"> not found!');
+    return;
+  }
+
+  // Check WebCodecs support
+  if (!window.VideoDecoder) {
+    console.error('❌ WebCodecs not supported in this browser');
+    return;
+  }
+
+  // Replace video with canvas
+  canvas = document.createElement('canvas');
+  canvas.id = 'video-canvas';
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
+  canvas.style.backgroundColor = 'black';
+  videoElement.parentNode.replaceChild(canvas, videoElement);
+  ctx = canvas.getContext('2d');
+
+  // Initialize WebCodecs decoder
+  decoder = new VideoDecoder({
+    output: handleDecodedFrame,
+    error: (error) => {
+      console.error('❌ WebCodecs decoder error:', error);
+      stats.decodeErrors++;
+    }
+  });
+
+  // Don't configure yet - wait for SPS/PPS
+  debugLog("✅ WebCodecs decoder created, waiting for SPS/PPS");
+
+  connectVideoWebSocket();
+}
+
+function handleDecodedFrame(frame) {
+  // Draw frame to canvas
+  if (canvas && ctx) {
+    canvas.width = frame.displayWidth;
+    canvas.height = frame.displayHeight;
+    ctx.drawImage(frame, 0, 0);
+    stats.framesDecoded++;
+  }
+  frame.close();
+}
+
+// ——————————————————————————
+// 2️⃣ WebSocket Setup & Handlers
+// ——————————————————————————
+function connectVideoWebSocket() {
+  const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${wsProtocol}//${window.location.host}/ws/video`;
+  debugLog(`🔗 Connecting to Video WebSocket: ${wsUrl}`);
+
+  if (videoWs) videoWs.close();
+  videoWs = new WebSocket(wsUrl);
+  videoWs.binaryType = "arraybuffer";
+
+  videoWs.onopen = () => {
+    debugLog("✅ Video WebSocket connected");
+    frameCount = 0;
+    lastFrameTime = 0;
+    fps = 0;
+    updateVideoStatus("Video: Connected", "green");
+    if (window.updateVideoStatusHeader) window.updateVideoStatusHeader("Connected", "connected");
+  };
+
+  videoWs.onmessage = (evt) => handleVideoMessage(evt.data);
+
+  videoWs.onclose = (e) => {
+    debugLog(`❌ Video WebSocket disconnected: ${e.code}`);
+    updateVideoStatus(`Video: Disconnected (${e.code})`, "red");
+    if (window.updateVideoStatusHeader) window.updateVideoStatusHeader("Disconnected", "disconnected");
+    videoWs = null;
+    if (videoStreamingActive) setTimeout(connectVideoWebSocket, 5000);
+  };
+
+  videoWs.onerror = (err) => {
+    console.error("❌ Video WebSocket error:", err);
+    updateVideoStatus("Video: Error", "red");
+    if (window.updateVideoStatusHeader) window.updateVideoStatusHeader("Error", "disconnected");
+  };
+}
+
+
+function extractParameterSetsAVC(uint8Array) {
+    // AVC format: [4-byte length][NAL unit][4-byte length][NAL unit]...
+    let offset = 0;
+    
+    while (offset + 4 < uint8Array.length) {
+      // Read 4-byte length (big endian)
+      const nalLength = (uint8Array[offset] << 24) | 
+                       (uint8Array[offset + 1] << 16) | 
+                       (uint8Array[offset + 2] << 8) | 
+                       uint8Array[offset + 3];
+      
+      if (nalLength <= 0 || offset + 4 + nalLength > uint8Array.length) {
+        break; // Invalid length
+      }
+      
+      // Get NAL unit type (first byte after length, masked with 0x1F)
+      const nalType = uint8Array[offset + 4] & 0x1F;
+      
+      if (nalType === 7 && !spsData) { // SPS
+        // Extract SPS including length prefix for AVC format
+        spsData = uint8Array.slice(offset, offset + 4 + nalLength);
+        debugLog("📋 SPS extracted:", spsData.length, "bytes (AVC format)");
+      }
+      
+      if (nalType === 8 && !ppsData) { // PPS
+        // Extract PPS including length prefix for AVC format
+        ppsData = uint8Array.slice(offset, offset + 4 + nalLength);
+        debugLog("📋 PPS extracted:", ppsData.length, "bytes (AVC format)");
+      }
+      
+      // Move to next NAL unit
+      offset += 4 + nalLength;
+    }
+  }
+  
+  // Also update createAVCDecoderConfig to handle AVC format SPS/PPS
+  function createAVCDecoderConfigFromAVC(sps, pps) {
+    // SPS and PPS already have length prefixes, extract the actual data
+    const spsData = sps.slice(4); // Remove 4-byte length prefix
+    const ppsData = pps.slice(4); // Remove 4-byte length prefix
+    
+    // Calculate buffer size
+    const avccSize = 8 + 2 + spsData.length + 1 + 2 + ppsData.length;
+    const avcc = new Uint8Array(avccSize);
+    
+    let offset = 0;
+    avcc[offset++] = 0x01; // version
+    avcc[offset++] = spsData[1]; // profile
+    avcc[offset++] = spsData[2]; // compatibility
+    avcc[offset++] = spsData[3]; // level
+    avcc[offset++] = 0xFF; // length size minus 1 (4 bytes)
+    avcc[offset++] = 0xE1; // number of SPS (1)
+    
+    // SPS length (big endian)
+    avcc[offset++] = (spsData.length >> 8) & 0xFF;
+    avcc[offset++] = spsData.length & 0xFF;
+    
+    // SPS data
+    avcc.set(spsData, offset);
+    offset += spsData.length;
+    
+    // Number of PPS
+    avcc[offset++] = 0x01; // number of PPS (1)
+    
+    // PPS length (big endian)
+    avcc[offset++] = (ppsData.length >> 8) & 0xFF;
+    avcc[offset++] = ppsData.length & 0xFF;
+    
+    // PPS data
+    avcc.set(ppsData, offset);
+    
+    debugLog("📋 AVCC created from AVC format:", avcc.length, "bytes");
+    return avcc;
+  }
+
+// ——————————————————————————
+// 3️⃣ Message Processing → WebCodecs
+// ——————————————————————————
+function handleVideoMessage(data) {
+    frameCount++;
+    stats.framesReceived++;
+    stats.totalFrameSize += data.byteLength;
+  
+    const now = Date.now();
+    if (lastFrameTime) {
+      fps = Math.round((1000 / (now - lastFrameTime)) * 10) / 10;
+    }
+    lastFrameTime = now;
+  
+    const uint8Array = new Uint8Array(data);
+    
+    if (frameCount < 5) {
+      console.log("Chunk size:", uint8Array.length, "bytes");
+      console.log("First 32 bytes:", Array.from(uint8Array).slice(0, 32));
+    }
+  
+    // Extract SPS/PPS from AVC format
+    extractParameterSetsAVC(uint8Array);
+  
+    // Check if keyframe (look for IDR NAL type 5 in AVC format)
+    const isKeyFrameDetected = isKeyFrameAVC(uint8Array);
+    if (isKeyFrameDetected) {
+      stats.keyFrames++;
+      debugLog(`🔑 Key frame detected! Frame ${frameCount}`);
+    }
+  
+    // Configure decoder once we have SPS/PPS
+    if (!decoderConfigured && spsData && ppsData && decoder) {
+      try {
+        // Create description from AVC format SPS/PPS
+        const description = createAVCDecoderConfigFromAVC(spsData, ppsData);
+        
+        decoder.configure({
+          codec: 'avc1.42E01E',
+          description: description,
+          hardwareAcceleration: 'prefer-software',
+          optimizeForLatency: true
+        });
+        
+        decoderConfigured = true;
+        debugLog("✅ WebCodecs decoder configured with AVC SPS/PPS");
+      } catch (error) {
+        console.error('❌ Failed to configure decoder with description:', error);
+        return;
+      }
+    }
+  
+    // Feed to WebCodecs decoder only after configured
+    if (decoder && decoderConfigured && decoder.state === 'configured') {
+      try {
+        const chunk = new EncodedVideoChunk({
+          type: isKeyFrameDetected ? 'key' : 'delta',
+          timestamp: now * 1000,
+          data: uint8Array
+        });
+        
+        decoder.decode(chunk);
+      } catch (e) {
+        console.error('❌ WebCodecs decode error:', e);
+        stats.decodeErrors++;
+      }
+    }
+  
+    if (frameCount === 1) {
+      updateVideoStatus("Video: Streaming", "green");
+      if (window.updateVideoStatusHeader) window.updateVideoStatusHeader("Streaming", "connected");
+      initializeVideoInfoDisplay();
+    }
+  
+    updateVideoStats();
+  }
+
+  function isKeyFrameAVC(uint8Array) {
+    // Check AVC format for IDR NAL type 5
+    let offset = 0;
+    
+    while (offset + 4 < uint8Array.length) {
+      const nalLength = (uint8Array[offset] << 24) | 
+                       (uint8Array[offset + 1] << 16) | 
+                       (uint8Array[offset + 2] << 8) | 
+                       uint8Array[offset + 3];
+      
+      if (nalLength <= 0 || offset + 4 + nalLength > uint8Array.length) {
+        break;
+      }
+      
+      const nalType = uint8Array[offset + 4] & 0x1F;
+      if (nalType === 5 || nalType === 7) { // IDR or SPS
+        return true;
+      }
+      
+      offset += 4 + nalLength;
+    }
+    return false;
+  }
+
+function extractParameterSets(uint8Array) {
+  // Look for SPS (NAL type 7) and PPS (NAL type 8)
+  for (let i = 0; i < uint8Array.length - 4; i++) {
+    if (uint8Array[i] === 0x00 && uint8Array[i+1] === 0x00 && 
+        uint8Array[i+2] === 0x00 && uint8Array[i+3] === 0x01) {
+      
+      const nalType = uint8Array[i+4] & 0x1F;
+      
+      if (nalType === 7 && !spsData) { // SPS
+        // Find next start code or end of buffer
+        let end = uint8Array.length;
+        for (let j = i + 4; j < uint8Array.length - 3; j++) {
+          if (uint8Array[j] === 0x00 && uint8Array[j+1] === 0x00 && 
+              uint8Array[j+2] === 0x00 && uint8Array[j+3] === 0x01) {
+            end = j;
+            break;
+          }
+        }
+        spsData = uint8Array.slice(i, end);
+        debugLog("📋 SPS extracted:", spsData.length, "bytes");
+      }
+      
+      if (nalType === 8 && !ppsData) { // PPS
+        let end = uint8Array.length;
+        for (let j = i + 4; j < uint8Array.length - 3; j++) {
+          if (uint8Array[j] === 0x00 && uint8Array[j+1] === 0x00 && 
+              uint8Array[j+2] === 0x00 && uint8Array[j+3] === 0x01) {
+            end = j;
+            break;
+          }
+        }
+        ppsData = uint8Array.slice(i, end);
+        debugLog("📋 PPS extracted:", ppsData.length, "bytes");
+      }
+    }
+  }
+}
+
+function createAVCDecoderConfig(sps, pps) {
+  // Create AVCC (AVC Configuration Record) format
+  const spsWithoutStartCode = sps.slice(4); // Remove 00 00 00 01
+  const ppsWithoutStartCode = pps.slice(4); // Remove 00 00 00 01
+  
+  // Calculate correct buffer size: 8 bytes header + 2 bytes SPS length + SPS + 1 byte + 2 bytes PPS length + PPS
+  const avccSize = 8 + 2 + spsWithoutStartCode.length + 1 + 2 + ppsWithoutStartCode.length;
+  const avcc = new Uint8Array(avccSize);
+  
+  let offset = 0;
+  avcc[offset++] = 0x01; // version
+  avcc[offset++] = spsWithoutStartCode[1]; // profile
+  avcc[offset++] = spsWithoutStartCode[2]; // compatibility
+  avcc[offset++] = spsWithoutStartCode[3]; // level
+  avcc[offset++] = 0xFF; // length size minus 1 (4 bytes)
+  avcc[offset++] = 0xE1; // number of SPS (1)
+  
+  // SPS length (big endian)
+  avcc[offset++] = (spsWithoutStartCode.length >> 8) & 0xFF;
+  avcc[offset++] = spsWithoutStartCode.length & 0xFF;
+  
+  // SPS data
+  avcc.set(spsWithoutStartCode, offset);
+  offset += spsWithoutStartCode.length;
+  
+  // Number of PPS
+  avcc[offset++] = 0x01; // number of PPS (1)
+  
+  // PPS length (big endian)
+  avcc[offset++] = (ppsWithoutStartCode.length >> 8) & 0xFF;
+  avcc[offset++] = ppsWithoutStartCode.length & 0xFF;
+  
+  // PPS data
+  avcc.set(ppsWithoutStartCode, offset);
+  
+  debugLog("📋 AVCC created:", avcc.length, "bytes");
+  return avcc;
+}
+
+// ——————————————————————————
+// 4️⃣ UI and Stats Helpers
+// ——————————————————————————
+function updateVideoStatus(msg, color) {
+  const elm = document.getElementById("video-status");
+  if (elm) {
+    elm.textContent = msg;
+    elm.style.color = color || "black";
+  } else {
+    debugLog(`📺 ${msg}`);
+  }
+}
+
+function initializeVideoInfoDisplay() {
+  const res = document.getElementById("video-resolution");
+  const codec = document.getElementById("video-codec");
+  if (res) res.textContent = "Resolution: Auto";
+  if (codec) codec.textContent = "Codec: H.264 (WebCodecs)";
+}
+
+function updateVideoStats() {
+  const now = Date.now();
+  if (now - stats.lastStatsUpdate < 1000) return;
+  stats.lastStatsUpdate = now;
+
+  const fEl = document.getElementById("stats-frames");
+  const fpsEl = document.getElementById("stats-fps");
+  const szEl = document.getElementById("stats-frame-size");
+
+  if (fEl) fEl.textContent = stats.framesReceived.toLocaleString();
+  if (fpsEl) fpsEl.textContent = fps ? fps.toFixed(1) : "--";
+  if (szEl) {
+    const avg =
+      stats.framesReceived > 0
+        ? Math.round(stats.totalFrameSize / stats.framesReceived)
+        : 0;
+    szEl.textContent = `${avg.toLocaleString()} bytes`;
+  }
+}
+
+function cleanupVideo() {
+  debugLog("🧹 Cleaning up video…");
+  videoStreamingActive = false;
+  
+  if (videoWs) {
+    videoWs.close();
+    videoWs = null;
+  }
+  
+  if (decoder) {
+    decoder.close();
+    decoder = null;
+  }
+  
+  // Reset stats
+  frameCount = 0;
+  fps = 0;
+  stats = {
     framesReceived: 0,
     framesDecoded: 0,
     decodeErrors: 0,
     keyFrames: 0,
     totalFrameSize: 0,
     lastStatsUpdate: 0
-};
-
-function initVideo() {
-    debugLog('🎬 Initializing Video Streaming...');
-    
-    // Set streaming as active
-    videoStreamingActive = true;
-
-    // Get video elements - handle case where video element was replaced with canvas
-    let videoElement = document.getElementById('video-player');
-    
-    // If video-player doesn't exist, it might have been replaced with a canvas
-    if (!videoElement) {
-        // Look for a canvas in the video container
-        const videoContainer = document.getElementById('video-container');
-        if (videoContainer) {
-            const canvas = videoContainer.querySelector('canvas');
-            if (canvas) {
-                debugLog('🎨 Found existing canvas element, reusing it');
-                videoElement = canvas;
-                // Give it the video-player ID for consistency
-                canvas.id = 'video-player';
-            }
-        }
-    }
-    
-    videoPlayer = videoElement;
-    const videoStatusDiv = document.getElementById('video-status');
-
-    debugLog('🔍 Looking for video elements...');
-    debugLog('videoPlayer:', videoPlayer);
-    debugLog('videoStatusDiv:', videoStatusDiv);
-    debugLog('document.readyState:', document.readyState);
-
-    if (!videoPlayer || !videoStatusDiv) {
-        console.error("❌ Video UI elements not found!");
-        if (VIDEO_DEBUG) {
-            console.log('videoPlayer:', videoPlayer);
-            console.log('videoStatusDiv:', videoStatusDiv);
-            console.log('Available elements with video in ID:');
-            const videoElements = document.querySelectorAll('[id*="video"]');
-            videoElements.forEach(el => console.log(`  - ${el.id}: ${el.tagName} (visible: ${el.offsetParent !== null}, display: ${getComputedStyle(el).display})`));
-            
-            // Also check all elements in teleop tab
-            const teleopElements = document.querySelectorAll('#teleop *[id]');
-            console.log('All elements with IDs in teleop tab:');
-            teleopElements.forEach(el => console.log(`  - ${el.id}: ${el.tagName}`));
-        }
-        return;
-    }
-
-    debugLog('✅ Video UI elements found successfully');
-
-    // Register status update callback
-    videoStatusCallback = (message, color) => {
-        debugLog(`📺 Video Status Update: ${message} (${color})`);
-        videoStatusDiv.textContent = message;
-        videoStatusDiv.style.color = color || 'black';
-    };
-
-    updateVideoStatus('Video: Initializing...', 'orange');
-    // Also directly update the header status
-    if (window.updateVideoStatusHeader) {
-        window.updateVideoStatusHeader('Initializing', 'initializing');
-    }
-
-    // Initialize WebCodecs H.264 decoder
-    initWebCodecsDecoder();
-
-    // Connect to video WebSocket
-    debugLog('🔌 Starting WebSocket connection...');
-    connectVideoWebSocket();
+  };
+  
+  updateVideoStatus("Video: Disconnected", "red");
+  if (window.updateVideoStatusHeader) window.updateVideoStatusHeader("Disconnected", "disconnected");
 }
 
-function connectVideoWebSocket() {
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/ws/video`;
-    
-    debugLog(`🔗 Connecting to Video WebSocket: ${wsUrl}`);
-    updateVideoStatus('Video: Connecting...', 'orange');
-    // Also directly update the header status
-    if (window.updateVideoStatusHeader) {
-        window.updateVideoStatusHeader('Connecting', 'warning');
-    }
-
-    // Close existing connection if any
-    if (videoWs && videoWs.readyState !== WebSocket.CLOSED) {
-        debugLog('🔄 Closing existing WebSocket connection');
-        videoWs.close();
-    }
-
-    try {
-        videoWs = new WebSocket(wsUrl);
-        videoWs.binaryType = 'arraybuffer'; // Important for binary data
-        
-        debugLog('📡 WebSocket created, setting up event handlers...');
-
-        videoWs.onopen = () => {
-            debugLog('✅ Video WebSocket connected');
-            updateVideoStatus('Video: Connected', 'green');
-            // Also directly update the header status
-            if (window.updateVideoStatusHeader) {
-                window.updateVideoStatusHeader('Connected', 'connected');
-            }
-            
-            // Reset frame counter for proper "Streaming" status detection
-            frameCount = 0;
-            lastFrameTime = 0;
-            fps = 0;
-            
-            // Fallback: Check if we're receiving frames after 2 seconds
-            setTimeout(() => {
-                if (frameCount > 0 && videoWs && videoWs.readyState === WebSocket.OPEN) {
-                    debugLog('🔄 Fallback: Ensuring streaming status is updated');
-                    updateVideoStatus('Video: Streaming', 'green');
-                    if (window.updateVideoStatusHeader) {
-                        window.updateVideoStatusHeader('Streaming', 'connected');
-                    }
-                }
-            }, 2000);
-        };
-
-        videoWs.onclose = (event) => {
-            debugLog(`❌ Video WebSocket disconnected: ${event.code}`);
-            updateVideoStatus(`Video: Disconnected (${event.code})`, 'red');
-            // Also directly update the header status
-            if (window.updateVideoStatusHeader) {
-                window.updateVideoStatusHeader('Disconnected', 'disconnected');
-            }
-            videoWs = null;
-            
-            // Only attempt to reconnect if streaming is still active
-            if (videoStreamingActive) {
-                debugLog('⏰ Scheduling reconnection in 5 seconds...');
-                setTimeout(connectVideoWebSocket, 5000);
-            } else {
-                debugLog('🛑 Video streaming inactive - not reconnecting');
-            }
-        };
-
-        videoWs.onerror = (error) => {
-            console.error('❌ Video WebSocket error:', error);
-            updateVideoStatus('Video: Error', 'red');
-            // Also directly update the header status
-            if (window.updateVideoStatusHeader) {
-                window.updateVideoStatusHeader('Error', 'disconnected');
-            }
-        };
-
-        videoWs.onmessage = (event) => {
-            handleVideoMessage(event.data);
-        };
-        
-        debugLog('🎯 WebSocket event handlers set up successfully');
-        
-    } catch (error) {
-        console.error('💥 Failed to create WebSocket:', error);
-        updateVideoStatus('Video: Failed to connect', 'red');
-    }
-}
-
-function initWebCodecsDecoder() {
-    // Check for WebCodecs API support
-    if (!window.VideoDecoder) {
-        console.error('❌ WebCodecs API not supported in this browser');
-        updateVideoStatus('Video: WebCodecs not supported', 'red');
-        return;
-    }
-
-    debugLog('🎬 Initializing WebCodecs H.264 decoder...');
-    
-    // Close existing decoder if any
-    if (window.videoDecoder && window.videoDecoder.state !== 'closed') {
-        debugLog('🔄 Closing existing VideoDecoder...');
-        try {
-            window.videoDecoder.close();
-        } catch (e) {
-            debugLog('⚠️ Error closing existing decoder:', e);
-        }
-    }
-    
-    // Create or reuse canvas for video rendering
-    let canvas = videoPlayer;
-    
-    // Create or reuse canvas for video rendering
-    if (!canvas || canvas.tagName !== 'CANVAS') {
-        canvas = document.createElement('canvas');
-        canvas.id = 'video-player';
-        canvas.width = 320;
-        canvas.height = 240;
-        canvas.style.width = '100%';
-        canvas.style.height = '100%';
-        canvas.style.objectFit = 'contain';
-        
-        // Replace video element with canvas
-        if (videoPlayer && videoPlayer.parentNode) {
-            videoPlayer.parentNode.replaceChild(canvas, videoPlayer);
-        }
-        videoPlayer = canvas;
-        debugLog('🎨 Created new canvas element with ID video-player');
-    }
-    
-    const ctx = canvas.getContext('2d');
-    
-    // Initialize VideoDecoder
-    const decoder = new VideoDecoder({
-        output: (frame) => {
-            debugLog(`🎬 Decoded frame: ${frame.displayWidth}x${frame.displayHeight}`);
-            
-            // Track successful decode
-            stats.framesDecoded++;
-            
-            // Draw frame to canvas
-            ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
-            frame.close();
-            
-            // Don't update status here - it's handled in handleVideoMessage
-        },
-        error: (error) => {
-            console.error('❌ VideoDecoder error:', error);
-            
-            // Track decoder errors
-            stats.decodeErrors++;
-            
-            // Don't update status for every error to avoid UI spam
-            debugLog('🔄 Decoder error occurred, will reinitialize...');
-            
-            // Reset state and reinitialize
-            waitingForKeyFrame = true;
-            frameBuffer = [];
-            
-            // Try to reinitialize after a short delay
-            setTimeout(() => {
-                debugLog('🔄 Attempting to reinitialize decoder after error...');
-                initWebCodecsDecoder();
-            }, 500); // Shorter delay for faster recovery
-        }
-    });
-    
-    // Configure decoder for H.264
-    const config = {
-        codec: 'avc1.42E01E', // H.264 Baseline Profile Level 3.0
-        codedWidth: 320,
-        codedHeight: 240,
-    };
-    
-    try {
-        decoder.configure(config);
-        debugLog('✅ WebCodecs VideoDecoder configured');
-        
-        // Store decoder for use in frame processing
-        window.videoDecoder = decoder;
-        
-        // Reset frame buffering state
-        waitingForKeyFrame = true;
-        frameBuffer = [];
-        
-        updateVideoStatus('Video: WebCodecs ready', 'orange');
-        
-    } catch (error) {
-        console.error('❌ Failed to configure VideoDecoder:', error);
-        updateVideoStatus('Video: WebCodecs config failed', 'red');
-    }
-}
-
-function decodeH264WithWebCodecs(h264Data) {
-    if (!window.videoDecoder) {
-        debugLog('❌ VideoDecoder not available');
-        return;
-    }
-    
-    // Check decoder state
-    if (window.videoDecoder.state === 'closed') {
-        debugLog('⚠️ VideoDecoder is closed, reinitializing...');
-        initWebCodecsDecoder();
-        waitingForKeyFrame = true; // Reset key frame waiting
-        return;
-    }
-    
-    if (window.videoDecoder.state !== 'configured') {
-        debugLog(`⚠️ VideoDecoder not ready (state: ${window.videoDecoder.state}), skipping frame`);
-        return;
-    }
-    
-    const isKey = isKeyFrame(h264Data);
-    
-    // If we're waiting for a key frame and this isn't one, buffer it
-    if (waitingForKeyFrame && !isKey) {
-        debugLog('⏳ Buffering delta frame while waiting for key frame');
-        frameBuffer.push(h264Data);
-        return;
-    }
-    
-    // If this is a key frame, we can start decoding
-    if (isKey && waitingForKeyFrame) {
-        debugLog('🔑 Key frame received, starting decode sequence');
-        waitingForKeyFrame = false;
-        
-        // Decode the key frame first
-        decodeFrame(h264Data, 'key');
-        
-        // Then decode any buffered frames
-        while (frameBuffer.length > 0) {
-            const bufferedFrame = frameBuffer.shift();
-            decodeFrame(bufferedFrame, 'delta');
-        }
-        return;
-    }
-    
-    // Normal decoding for subsequent frames
-    if (!waitingForKeyFrame) {
-        decodeFrame(h264Data, isKey ? 'key' : 'delta');
-    }
-}
-
-function decodeFrame(h264Data, frameType) {
-    try {
-        // Additional validation before creating chunk
-        if (!h264Data || h264Data.length === 0) {
-            debugLog('⚠️ Empty H.264 data, skipping frame');
-            return;
-        }
-        
-        const chunk = new EncodedVideoChunk({
-            type: frameType,
-            timestamp: performance.now() * 1000, // Convert to microseconds
-            data: h264Data
-        });
-        
-        debugLog(`🎬 Decoding ${frameType} frame: ${h264Data.length} bytes`);
-        window.videoDecoder.decode(chunk);
-        
-    } catch (error) {
-        debugLog('❌ Failed to decode H.264 frame:', error);
-        
-        // If we get a DataError about key frames, reset and wait for next key frame
-        if (error.name === 'DataError' && error.message.includes('key frame')) {
-            debugLog('🔄 Key frame required, resetting decoder state...');
-            waitingForKeyFrame = true;
-            frameBuffer = [];
-            return;
-        }
-        
-        // For other DataErrors (corrupted frames), just skip and continue
-        if (error.name === 'DataError') {
-            debugLog('⚠️ Corrupted frame detected, skipping...');
-            stats.decodeErrors++;
-            return;
-        }
-        
-        // If decoder is in error state, try to reinitialize
-        if (error.name === 'InvalidStateError') {
-            debugLog('🔄 Decoder in invalid state, reinitializing...');
-            initWebCodecsDecoder();
-            waitingForKeyFrame = true;
-            frameBuffer = [];
-        }
-    }
-}
-
-function isKeyFrame(h264Data) {
-    // Check if this is a key frame (I-frame) by looking for SPS/PPS/IDR NAL units
-    // NAL unit type is in the first byte after start code
-    for (let i = 0; i < h264Data.length - 4; i++) {
-        if (h264Data[i] === 0x00 && h264Data[i+1] === 0x00 && 
-            h264Data[i+2] === 0x00 && h264Data[i+3] === 0x01) {
-            const nalType = h264Data[i+4] & 0x1F;
-            // NAL types: 7=SPS, 8=PPS, 5=IDR (key frame)
-            if (nalType === 5 || nalType === 7 || nalType === 8) {
-                debugLog(`🔑 Key frame detected (NAL type: ${nalType})`);
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-function handleVideoMessage(data) {
-    frameCount++;
-    stats.framesReceived++;
-    stats.totalFrameSize += data.byteLength;
-    
-    // Update FPS calculation
-    const currentTime = Date.now();
-    if (lastFrameTime > 0) {
-        const timeDiff = currentTime - lastFrameTime;
-        fps = Math.round(1000 / timeDiff * 10) / 10; // Round to 1 decimal
-    }
-    lastFrameTime = currentTime;
-
-    debugLog(`📦 Received video frame #${frameCount}: ${data.byteLength} bytes`);
-    
-    // Parse FlatBuffer to extract H.264 payload
-    try {
-        const uint8Array = new Uint8Array(data);
-        
-        // Parse the FlatBuffer to extract the H.264 payload
-        const h264Payload = extractH264FromFlatBuffer(uint8Array);
-        
-        if (h264Payload && h264Payload.length > 0) {
-            debugLog(`🎬 Extracted H.264 payload: ${h264Payload.length} bytes`);
-            
-            // Check if this is a key frame for statistics
-            if (isKeyFrame(h264Payload)) {
-                stats.keyFrames++;
-            }
-            
-            // Decode using WebCodecs
-            if (window.videoDecoder) {
-                decodeH264WithWebCodecs(h264Payload);
-            } else {
-                debugLog('⚠️ WebCodecs decoder not available');
-                stats.decodeErrors++;
-            }
-        } else {
-            debugLog(`⚠️ No H.264 payload found in FlatBuffer`);
-            stats.decodeErrors++;
-        }
-        
-    } catch (error) {
-        console.error('❌ Error processing video frame:', error);
-        stats.decodeErrors++;
-    }
-
-    // Update UI when streaming starts to prevent any shaking
-    if (frameCount === 1) {
-        // One-time status update when streaming starts
-        updateVideoStatus('Video: Streaming', 'green');
-        // Also directly update the header status to ensure synchronization
-        if (window.updateVideoStatusHeader) {
-            window.updateVideoStatusHeader('Streaming', 'connected');
-        }
-        // Initialize video info display once
-        initializeVideoInfoDisplay();
-        debugLog('🎬 Video streaming status updated to "Streaming"');
-    }
-    
-    // Update statistics (throttled to once per second)
-    updateVideoStats();
-}
-
-function extractH264FromFlatBuffer(uint8Array) {
-    try {
-        // First try to find H.264 data using NAL unit search
-        const h264Data = findH264Data(uint8Array);
-        
-        if (h264Data && h264Data.length > 4) {
-            // Validate that we have a complete NAL unit
-            if (isValidH264Data(h264Data)) {
-                return h264Data;
-            } else {
-                debugLog('⚠️ Invalid H.264 data detected, skipping frame');
-                return null;
-            }
-        }
-        
-        debugLog('⚠️ No valid H.264 data found in FlatBuffer');
-        return null;
-        
-    } catch (error) {
-        console.error('❌ Error parsing FlatBuffer:', error);
-        return null;
-    }
-}
-
-function isValidH264Data(data) {
-    // Basic validation: check for proper NAL unit structure
-    if (data.length < 5) return false;
-    
-    // Check for start code (0x00 0x00 0x00 0x01 or 0x00 0x00 0x01)
-    let hasStartCode = false;
-    if (data[0] === 0x00 && data[1] === 0x00) {
-        if (data[2] === 0x00 && data[3] === 0x01) {
-            hasStartCode = true;
-        } else if (data[2] === 0x01) {
-            hasStartCode = true;
-        }
-    }
-    
-    if (!hasStartCode) {
-        debugLog('⚠️ H.264 data missing start code');
-        return false;
-    }
-    
-    return true;
-}
-
-function findH264Data(uint8Array) {
-    // Look for H.264 NAL unit start codes
-    for (let i = 0; i < uint8Array.length - 4; i++) {
-        if ((uint8Array[i] === 0x00 && uint8Array[i+1] === 0x00 && uint8Array[i+2] === 0x00 && uint8Array[i+3] === 0x01) ||
-            (uint8Array[i] === 0x00 && uint8Array[i+1] === 0x00 && uint8Array[i+2] === 0x01)) {
-            debugLog(`🔍 Found H.264 NAL start code at offset ${i}`);
-            return uint8Array.slice(i);
-        }
-    }
-    return null;
-}
-
-
-
-function updateVideoStatus(message, color) {
-    if (videoStatusCallback) {
-        videoStatusCallback(message, color);
-    } else {
-        debugLog(`📺 Video Status: ${message}`);
-    }
-}
-
-function initializeVideoInfoDisplay() {
-    // Set static video info once when streaming starts
-    const resolutionSpan = document.getElementById('video-resolution');
-    const codecSpan = document.getElementById('video-codec');
-
-    if (resolutionSpan) {
-        resolutionSpan.textContent = `Resolution: 320x240`;
-    }
-    
-    if (codecSpan) {
-        codecSpan.textContent = `Codec: H.264`;
-    }
-}
-
-function updateVideoStats() {
-    // Update statistics display (throttled to avoid UI shaking)
-    const currentTime = Date.now();
-    if (currentTime - stats.lastStatsUpdate < 1000) {
-        return; // Update only once per second
-    }
-    stats.lastStatsUpdate = currentTime;
-    
-    // Safety check: If we have active frames but status isn't "Streaming", update it
-    if (stats.framesReceived > 10 && stats.framesDecoded > 5) {
-        const videoStatusDiv = document.getElementById('video-status');
-        if (videoStatusDiv && !videoStatusDiv.textContent.includes('Streaming')) {
-            debugLog('🔧 Safety check: Updating status to Streaming based on active frame processing');
-            updateVideoStatus('Video: Streaming', 'green');
-            if (window.updateVideoStatusHeader) {
-                window.updateVideoStatusHeader('Streaming', 'connected');
-            }
-        }
-    }
-
-    const framesElement = document.getElementById('stats-frames');
-    const decodedElement = document.getElementById('stats-decoded');
-    const errorsElement = document.getElementById('stats-errors');
-    const errorRateElement = document.getElementById('stats-error-rate');
-    const fpsElement = document.getElementById('stats-fps');
-    const frameSizeElement = document.getElementById('stats-frame-size');
-    const keyFramesElement = document.getElementById('stats-key-frames');
-
-    if (framesElement) {
-        framesElement.textContent = stats.framesReceived.toLocaleString();
-    }
-    
-    if (decodedElement) {
-        decodedElement.textContent = stats.framesDecoded.toLocaleString();
-    }
-    
-    if (errorsElement) {
-        errorsElement.textContent = stats.decodeErrors.toLocaleString();
-    }
-    
-    if (errorRateElement) {
-        const errorRate = stats.framesReceived > 0 ? 
-            ((stats.decodeErrors / stats.framesReceived) * 100).toFixed(1) : '0.0';
-        errorRateElement.textContent = `${errorRate}%`;
-        
-        // Color code the error rate
-        if (parseFloat(errorRate) > 5) {
-            errorRateElement.style.color = '#dc3545'; // Red for high error rate
-        } else if (parseFloat(errorRate) > 1) {
-            errorRateElement.style.color = '#fd7e14'; // Orange for medium error rate
-        } else {
-            errorRateElement.style.color = '#28a745'; // Green for low error rate
-        }
-    }
-    
-    if (fpsElement) {
-        fpsElement.textContent = fps ? fps.toFixed(1) : '--';
-    }
-    
-    if (frameSizeElement) {
-        const avgSize = stats.framesReceived > 0 ? 
-            Math.round(stats.totalFrameSize / stats.framesReceived) : 0;
-        frameSizeElement.textContent = `${avgSize.toLocaleString()} bytes`;
-    }
-    
-    if (keyFramesElement) {
-        keyFramesElement.textContent = stats.keyFrames.toLocaleString();
-    }
-}
-
-function updateVideoInfo(currentFps, frameSize) {
-    // This function is now unused during streaming to prevent shaking
-    // Video info is set once in initializeVideoInfoDisplay()
-}
-
-function cleanupVideo() {
-    debugLog('🧹 Cleaning up Video Streaming resources...');
-    
-    // Mark streaming as inactive to prevent reconnection
-    videoStreamingActive = false;
-    
-    // Close WebSocket connection
-    if (videoWs && videoWs.readyState !== WebSocket.CLOSED) {
-        debugLog('🔌 Closing video WebSocket connection');
-        videoWs.close();
-        videoWs = null;
-    }
-    
-    // Close VideoDecoder
-    if (window.videoDecoder && window.videoDecoder.state !== 'closed') {
-        debugLog('🎬 Closing VideoDecoder');
-        try {
-            window.videoDecoder.close();
-        } catch (e) {
-            debugLog('⚠️ Error closing VideoDecoder:', e);
-        }
-        window.videoDecoder = null;
-    }
-    
-    // Clear frame buffer
-    frameBuffer = [];
-    waitingForKeyFrame = true;
-    
-    // Reset statistics
-    frameCount = 0;
-    lastFrameTime = 0;
-    fps = 0;
-    stats = {
-        framesReceived: 0,
-        framesDecoded: 0,
-        decodeErrors: 0,
-        keyFrames: 0,
-        totalFrameSize: 0,
-        lastStatsUpdate: 0
-    };
-    
-    // Update UI to show disconnected state
-    updateVideoStatus('Video: Disconnected', 'red');
-    // Also directly update the header status
-    if (window.updateVideoStatusHeader) {
-        window.updateVideoStatusHeader('Disconnected', 'disconnected');
-    }
-    
-    // Clear video display (if canvas)
-    if (videoPlayer && videoPlayer.tagName === 'CANVAS') {
-        const ctx = videoPlayer.getContext('2d');
-        ctx.fillStyle = '#000';
-        ctx.fillRect(0, 0, videoPlayer.width, videoPlayer.height);
-    }
-    
-    debugLog('✅ Video streaming cleanup completed');
-}
-
-// Function to resize canvas when container changes
-function resizeCanvas() {
-    if (videoPlayer && videoPlayer.tagName === 'CANVAS') {
-        // For now, keep canvas at fixed high resolution
-        const targetWidth = 800;
-        const targetHeight = 600;
-        
-        if (videoPlayer.width !== targetWidth || videoPlayer.height !== targetHeight) {
-            debugLog(`🔄 Resizing canvas: ${videoPlayer.width}x${videoPlayer.height} → ${targetWidth}x${targetHeight}`);
-            videoPlayer.width = targetWidth;
-            videoPlayer.height = targetHeight;
-            
-            // Clear with black background
-            const ctx = videoPlayer.getContext('2d');
-            ctx.fillStyle = '#000';
-            ctx.fillRect(0, 0, targetWidth, targetHeight);
-        }
-    }
-}
-
-// Set up window resize listener for responsive canvas
-window.addEventListener('resize', () => {
-    setTimeout(resizeCanvas, 100); // Small delay to let layout settle
-});
-
-// Function to force canvas recreation (for testing)
-function recreateCanvas() {
-    debugLog('🔄 Force recreating canvas...');
-    if (window.videoDecoder && window.videoDecoder.state !== 'closed') {
-        window.videoDecoder.close();
-    }
-    initWebCodecsDecoder();
-}
-
-// Export functions for main.js to call
+// ——————————————————————————
+// 5️⃣ Expose for main.js
+// ——————————————————————————
 window.initVideo = initVideo;
 window.cleanupVideo = cleanupVideo;
-window.resizeCanvas = resizeCanvas;
-window.recreateCanvas = recreateCanvas;
 
-debugLog('🔧 initVideo, cleanupVideo, resizeCanvas, and recreateCanvas functions exported to window'); 
+debugLog("🔧 video.js loaded with WebCodecs H.264 decoder!");

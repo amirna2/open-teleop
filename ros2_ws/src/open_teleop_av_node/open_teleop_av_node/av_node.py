@@ -203,13 +203,14 @@ class GstPipeline:
                     # This check is critical as Gst.ElementFactory.make can return None
                     raise RuntimeError(f"Failed to create h264parse element for {self.stream_id}")
                 self.h264parser.set_property("config-interval", -1) # Send SPS/PPS with every IDR frame
-                #self.h264parser.set_property("disable-passthrough", True) # Force processing to ensure proper format
+                self.h264parser.set_property("disable-passthrough", True) # Force processing to ensure proper format
                 
                 # Create capsfilter to force byte-stream (Annex-B) format
                 self.capsfilter = Gst.ElementFactory.make("capsfilter", f"caps_{self.stream_id}")
                 if not self.capsfilter:
                     raise RuntimeError(f"Failed to create capsfilter element for {self.stream_id}")
-                caps = Gst.Caps.from_string("video/x-h264,stream-format=byte-stream,alignment=nal")
+                #caps = Gst.Caps.from_string("video/x-h264,stream-format=byte-stream,alignment=nal")
+                caps = Gst.Caps.from_string("video/x-h264,stream-format=avc,alignment=au,profile=baseline")
                 self.capsfilter.set_property("caps", caps)
                 
                 self.logger.debug(f"Created and configured h264parse and capsfilter for {self.stream_id}")

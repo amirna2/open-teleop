@@ -430,9 +430,9 @@ func (d *MessageDispatcher) handleRawFlatbuffer(data []byte) ([]byte, error) {
 		d.mu.RUnlock()
 
 		if videoSvc != nil {
-			// Send the entire Flatbuffer to connected clients
-			videoSvc.BroadcastVideoFrame(ottTopic, timestampNs, data)
-			d.logger.Debugf("Forwarded video frame to VideoService for broadcast")
+			// Parse the FlatBuffer to extract the payload (raw H.264)
+			payloadBytes := ottMsg.PayloadBytes()
+			videoSvc.BroadcastVideoFrame(ottTopic, timestampNs, payloadBytes)
 
 			// Count connected clients
 			clientCount := videoSvc.GetClientCount()

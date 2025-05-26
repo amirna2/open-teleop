@@ -46,7 +46,8 @@ func (s *VideoService) BroadcastVideoFrame(topic string, timestamp int64, messag
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Fast relay: send the entire FlatBuffer message as-is
+	s.logger.Debugf("BroadcastVideoFrame: Received H264 frame with %d bytes. Data (hex): %x...", len(messageData), messageData[:32])
+
 	for conn := range s.clients {
 		if err := conn.WriteMessage(websocket.BinaryMessage, messageData); err != nil {
 			s.logger.Warnf("Failed to send video frame to %s: %v. Removing client.", conn.RemoteAddr(), err)
@@ -54,7 +55,7 @@ func (s *VideoService) BroadcastVideoFrame(topic string, timestamp int64, messag
 			delete(s.clients, conn)
 		}
 	}
-	s.logger.Infof("Broadcasted video frame (%d bytes) to %d clients (topic: %s, timestamp: %d)", len(messageData), len(s.clients), topic, timestamp)
+	s.logger.Debugf("Broadcasted video frame (%d bytes) to %d clients (topic: %s, timestamp: %d)", len(messageData), len(s.clients), topic, timestamp)
 }
 
 // GetClientCount returns the number of currently connected clients
