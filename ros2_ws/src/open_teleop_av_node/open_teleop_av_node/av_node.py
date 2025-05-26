@@ -31,10 +31,9 @@ class GstPipeline:
             "name": "nvh264enc", 
             "type": "hardware", 
             "fixed_properties": {
-                "tune": "zerolatency", 
-                "profile": 0, # 0=Baseline, 1=Constrained Baseline, 2=Main, 3=High
-                "control-rate": 2, # 0=VBR, 1=VBR_MINQP, 2=CBR, 3=CBR_LOWDELAY_HQ, 4=CBR_HQ, 5=VBR_HQ
-                "insert-sps-pps": True # Ensure SPS/PPS are sent with keyframes
+                "preset": 3, # low latency
+                "rc-mode": 0, # CBR
+                "zerolatency": True,
             },
             "param_mappings": {
                 "gop_size": "gop-size", # nvh264enc uses gop-size
@@ -46,7 +45,6 @@ class GstPipeline:
             "type": "software", 
             "fixed_properties": {
                 "tune": "zerolatency", 
-                # x264enc profile is a string like 'baseline', not setting it here to use default or what user might provide via full params
             },
             "param_mappings": {
                 "gop_size": "key-int-max", # x264enc uses key-int-max
@@ -71,10 +69,10 @@ class GstPipeline:
                 self.logger.error(f"Failed to parse encoder_params JSON for {stream_id}: {e}. Raw params: '{encoder_params}'")
                 raise ValueError(f"Invalid encoder_params JSON: {e}") from e
         elif isinstance(encoder_params, dict):
-             self.logger.warning(f"encoder_params for {stream_id} was already a dict, not expected JSON string.")
+             self.logger.debug(f"encoder_params for {stream_id} was already a dict: {encoder_params}")
              self.parsed_encoder_params = encoder_params
         else:
-            self.logger.warning(f"No valid encoder_params provided for {stream_id}. Using defaults.")
+            self.logger.warning(f"No valid encoder_params provided for {stream_id} or type is {type(encoder_params)}. Using defaults (empty dict).")
 
         self.pipeline = None
         self.appsrc = None
@@ -89,6 +87,92 @@ class GstPipeline:
         
         self._create_pipeline()
     
+    def _apply_encoder_properties(self, encoder_element, candidate_config, user_params):
+        """Applies fixed and user-defined properties to an encoder element, relying on candidate_config.param_mappings."""
+        encoder_name = candidate_config["name"]
+        self.logger.debug(f"Applying properties to {encoder_name} for stream {self.stream_id}. Candidate: {candidate_config['name']}, User params: {user_params}")
+
+        # 1. Apply fixed properties (defined in H264_ENCODER_CANDIDATES)
+        fixed_props = candidate_config.get("fixed_properties", {})
+        for prop_name, prop_value in fixed_props.items():
+            if encoder_element.find_property(prop_name):
+                try:
+                    encoder_element.set_property(prop_name, prop_value)
+                    self.logger.debug(f"Set {encoder_name} fixed property: {prop_name}={prop_value}")
+                except Exception as e_prop:
+                    self.logger.warning(f"Failed to set fixed property {prop_name}={prop_value} on {encoder_name}: {e_prop}")
+            else:
+                self.logger.warning(f"Fixed property '{prop_name}' not found on {encoder_name} (specified in candidate config for {encoder_name}).")
+
+        # 2. Apply user-defined parameters (from encoder_params in service request) using param_mappings
+        param_map = candidate_config.get("param_mappings", {})
+        
+        for user_param_key, user_param_value in user_params.items():
+            gst_prop_name = param_map.get(user_param_key) 
+            
+            if gst_prop_name: 
+                if encoder_element.find_property(gst_prop_name):
+                    try:
+                        actual_value = user_param_value
+                        
+                        # Convert to int if user_param_value is a digit string and the target GStreamer property is known to be an integer type
+                        if isinstance(user_param_value, str) and user_param_value.isdigit():
+                            if gst_prop_name in ["bitrate", "gop-size", "key-int-max"]: # Known integer GStreamer properties
+                                actual_value = int(user_param_value)
+                        # Warn if the type is not a basic one GStreamer usually handles, but still attempt to set.
+                        elif not isinstance(user_param_value, (int, float, bool, str)):
+                             self.logger.warning(f"User parameter '{user_param_key}' (value: {user_param_value}) has non-basic type {type(user_param_value)}. Using as is for {gst_prop_name}.")
+                        
+                        encoder_element.set_property(gst_prop_name, actual_value)
+                        self.logger.debug(f"Set {encoder_name} user-defined property: {gst_prop_name}={actual_value} (from user param '{user_param_key}')")
+                    except Exception as e_user_prop:
+                        self.logger.warning(f"Failed to set user-defined property {gst_prop_name} (from '{user_param_key}'='{user_param_value}') on {encoder_name}: {e_user_prop}")
+                else:
+                    self.logger.warning(f"Mapped GStreamer property '{gst_prop_name}' (for user param '{user_param_key}') not found on {encoder_name}.")
+
+    def _attempt_create_encoder(self, candidate_config, user_params):
+        """Attempts to create and configure a single encoder candidate."""
+        factory = Gst.ElementFactory.find(candidate_config["name"])
+        if not factory:
+            self.logger.debug(f"Encoder factory not found for {candidate_config['name']}. Skipping.")
+            return None, None # Return None for encoder and config
+
+        self.logger.info(f"Attempting to use encoder: {candidate_config['name']} ({candidate_config['type']}) for stream {self.stream_id}")
+        encoder_element = Gst.ElementFactory.make(candidate_config["name"], f"enc_{self.stream_id}")
+
+        if not encoder_element:
+            self.logger.warning(f"Found factory for {candidate_config['name']}, but Gst.ElementFactory.make() failed for stream {self.stream_id}.")
+            return None, None
+        
+        try:
+            # _apply_encoder_properties logs its own warnings for individual property failures but does not raise exceptions itself.
+            self._apply_encoder_properties(encoder_element, candidate_config, user_params)
+            self.logger.info(f"Successfully created and configured encoder: {candidate_config['name']} for stream {self.stream_id}")
+            return encoder_element, candidate_config # Return the element and its config
+        except Exception as e: 
+            # This catch block is more of a safeguard; _apply_encoder_properties should handle its errors gracefully.
+            self.logger.error(f"Unexpected error occurred while applying properties to {candidate_config['name']} for stream {self.stream_id}: {e}. This specific encoder instance will not be used.")
+            # Element is not part of a pipeline yet, so no need to set state to NULL.
+            # It will be garbage collected if not returned.
+            return None, None
+
+
+    def _create_encoder_element(self):
+        """Finds the best available H264 encoder and configures it.
+        Returns the Gst.Element for the encoder and its candidate configuration dictionary.
+        Raises RuntimeError if no suitable encoder can be created.
+        """
+        # This method is called when self.encoding_format is "video/h264"
+        for candidate_config in self.H264_ENCODER_CANDIDATES:
+            encoder, chosen_candidate_config = self._attempt_create_encoder(candidate_config, self.parsed_encoder_params)
+            if encoder:
+                return encoder, chosen_candidate_config # Return both encoder and its config
+
+        # If loop completes, no encoder was successfully created
+        error_msg = f"Failed to create any suitable H.264 encoder for stream {self.stream_id} after trying all candidates ({[c['name'] for c in self.H264_ENCODER_CANDIDATES]})."
+        self.logger.error(error_msg)
+        raise RuntimeError(error_msg)
+    
     def _create_pipeline(self):
         """Creates the GStreamer pipeline with all elements."""
         try:
@@ -97,127 +181,91 @@ class GstPipeline:
             self.appsrc = Gst.ElementFactory.make("appsrc", f"appsrc_{self.stream_id}")
             videoconvert = Gst.ElementFactory.make("videoconvert", f"vconv_{self.stream_id}")
             
-            selected_encoder_info = None
             self.encoder = None
+            # selected_encoder_candidate_config = None # Optionally store the chosen encoder's config
 
             if self.encoding_format == "video/h264":
-                for candidate in self.H264_ENCODER_CANDIDATES:
-                    factory = Gst.ElementFactory.find(candidate["name"])
-                    if factory:
-                        self.logger.info(f"Attempting to use encoder: {candidate['name']} ({candidate['type']}) for stream {self.stream_id}")
-                        temp_encoder = Gst.ElementFactory.make(candidate["name"], f"enc_{self.stream_id}")
-                        if temp_encoder:
-                            try:
-                                # Apply fixed properties for the chosen encoder
-                                if "fixed_properties" in candidate:
-                                    for prop_name, prop_value in candidate["fixed_properties"].items():
-                                        if temp_encoder.find_property(prop_name):
-                                            try:
-                                                temp_encoder.set_property(prop_name, prop_value)
-                                                self.logger.debug(f"Set {candidate['name']} fixed property: {prop_name}={prop_value}")
-                                            except Exception as e_prop:
-                                                self.logger.warning(f"Failed to set fixed property {prop_name}={prop_value} on {candidate['name']}: {e_prop}")
-                                        else:
-                                            self.logger.warning(f"Fixed property '{prop_name}' not found on {candidate['name']}, but specified in candidate config.")
-
-                                # Apply user-defined parameters using mappings
-                                param_map = candidate.get("param_mappings", {})
-
-                                if 'bitrate' in self.parsed_encoder_params:
-                                    bitrate_kbps = int(self.parsed_encoder_params['bitrate'])
-                                    bitrate_prop_name = param_map.get("bitrate", "bitrate") # Default to "bitrate"
-                                    if temp_encoder.find_property(bitrate_prop_name):
-                                        temp_encoder.set_property(bitrate_prop_name, bitrate_kbps) 
-                                        self.logger.debug(f"Set {candidate['name']} {bitrate_prop_name}={bitrate_kbps} kbps for {self.stream_id}")
-                                    else:
-                                        self.logger.warning(f"Property '{bitrate_prop_name}' (for bitrate) not found on {candidate['name']}. Cannot set bitrate.")
-                                        
-                                if 'gop_size' in self.parsed_encoder_params:
-                                    gop_frames = int(self.parsed_encoder_params['gop_size'])
-                                    gop_prop_name = param_map.get("gop_size")
-                                    if gop_prop_name and temp_encoder.find_property(gop_prop_name):
-                                        temp_encoder.set_property(gop_prop_name, gop_frames) 
-                                        self.logger.debug(f"Set {candidate['name']} {gop_prop_name}={gop_frames} frames for {self.stream_id}")
-                                    else:
-                                        # Fallback for x264enc if gop_size not explicitly mapped but key-int-max exists
-                                        if candidate["name"] == "x264enc" and temp_encoder.find_property("key-int-max") and not gop_prop_name:
-                                             temp_encoder.set_property("key-int-max", gop_frames)
-                                             self.logger.debug(f"Set {candidate['name']} key-int-max={gop_frames} (fallback GOP property) for {self.stream_id}")
-                                        elif gop_prop_name: # Mapped name was provided but not found on element
-                                             self.logger.warning(f"Property '{gop_prop_name}' (for gop_size) not found on {candidate['name']}.")
-                                        else: # No mapping and no standard fallback known here
-                                            self.logger.warning(f"Could not determine GOP size property for {candidate['name']} or it was not found.")
-                                
-                                self.encoder = temp_encoder
-                                selected_encoder_info = candidate
-                                self.logger.info(f"Successfully created and configured encoder: {candidate['name']} for stream {self.stream_id}")
-                                break # Found and configured an encoder
-                            except Exception as e:
-                                self.logger.warning(f"Failed to configure {candidate['name']} for stream {self.stream_id}: {e}. Trying next.")
-                                if temp_encoder:
-                                    # temp_encoder.set_state(Gst.State.NULL) # Risky if not part of pipeline yet
-                                    pass # Element will be garbage collected if not assigned to self.encoder
-                                self.encoder = None 
-                        else:
-                            self.logger.warning(f"Found factory for {candidate['name']}, but Gst.ElementFactory.make() failed for stream {self.stream_id}.")
-                    else:
-                        self.logger.debug(f"Encoder factory not found for {candidate['name']}. Skipping.")
-
-                if not self.encoder:
-                    self.logger.error(f"Failed to create any suitable H.264 encoder for stream {self.stream_id} after trying all candidates ({[c['name'] for c in self.H264_ENCODER_CANDIDATES]}).")
-                    raise RuntimeError(f"No H264 encoder could be initialized for {self.stream_id}")
+                # _create_encoder_element will raise RuntimeError if no encoder is found
+                self.encoder, _ = self._create_encoder_element() 
+                # The second return value (selected_encoder_candidate_config) is currently not used further here.
                 
-                # Create and configure h264parse if H264 encoding is used
+                # Create and configure h264parse since H264 encoding is used
                 self.h264parser = Gst.ElementFactory.make("h264parse", f"parse_{self.stream_id}")
                 if not self.h264parser:
+                    # This check is critical as Gst.ElementFactory.make can return None
                     raise RuntimeError(f"Failed to create h264parse element for {self.stream_id}")
                 self.h264parser.set_property("config-interval", -1) # Send SPS/PPS with every IDR frame
                 self.logger.debug(f"Created and configured h264parse for {self.stream_id}")
             else:
-                raise NotImplementedError(f"Encoding format '{self.encoding_format}' is not supported yet.")
+                # If other encoding formats were to be supported, their specific logic would go here.
+                # For now, this node is focused on H264 via this structure.
+                self.logger.error(f"Encoding format '{self.encoding_format}' is not 'video/h264' and is not supported by the current encoder creation logic.")
+                raise NotImplementedError(f"Encoding format '{self.encoding_format}' is not supported by this pipeline configuration.")
 
             self.appsink = Gst.ElementFactory.make("appsink", f"appsink_{self.stream_id}")
-            if self.appsink:
+            if self.appsink: # Standard check for appsink creation
                 self.appsink.set_property("max-buffers", 5) 
                 self.appsink.set_property("drop", False)
-                self.appsink.set_property("sync", False)
+                self.appsink.set_property("sync", False) # Keep False for lower latency in teleop
                 self.appsink.set_property("emit-signals", True)
+            else:
+                 raise RuntimeError(f"Failed to create appsink element for {self.stream_id}")
 
+
+            # Consolidate checks for element creation failures.
+            # self.encoder is guaranteed by _create_encoder_element raising an error on failure.
+            # self.h264parser (if H264) is also checked.
             if not all([self.pipeline, self.appsrc, videoconvert, self.encoder, self.appsink]):
-                raise RuntimeError(f"Failed to create one or more GStreamer elements for {self.stream_id}")
+                # Construct a list of missing elements for a more informative error message
+                missing_elements = []
+                if not self.pipeline: missing_elements.append("pipeline")
+                if not self.appsrc: missing_elements.append("appsrc")
+                if not videoconvert: missing_elements.append("videoconvert")
+                if not self.encoder: missing_elements.append("encoder") # Should be caught earlier by _create_encoder_element
+                if not self.appsink: missing_elements.append("appsink")
+                # self.h264parser is conditional, so not in this all() check directly for general pipeline
+                raise RuntimeError(f"Failed to create one or more core GStreamer elements for {self.stream_id}: {', '.join(missing_elements)}")
             
-            self.logger.debug(f"Elements created for {self.stream_id}")
+            self.logger.debug(f"All core GStreamer elements created successfully for {self.stream_id}. Encoder being used: {self.encoder.get_name()}")
 
+            # Add elements to the pipeline
             self.pipeline.add(self.appsrc)
             self.pipeline.add(videoconvert)
-            self.pipeline.add(self.encoder)
-            if self.h264parser: # Add h264parser if it was created (i.e. for H264)
+            self.pipeline.add(self.encoder) # self.encoder is guaranteed to be valid if we reached here for H264
+            if self.h264parser: # Add h264parser if it was created (i.e., for H264)
                 self.pipeline.add(self.h264parser)
             self.pipeline.add(self.appsink)
 
+            # Link the elements sequentially
             if not self.appsrc.link(videoconvert):
                 raise RuntimeError(f"Failed to link appsrc to videoconvert for {self.stream_id}")
             
-            last_element_before_appsink = videoconvert
-            if self.encoder:
-                if not last_element_before_appsink.link(self.encoder):
-                     raise RuntimeError(f"Failed to link {last_element_before_appsink.get_name()} to encoder for {self.stream_id}")
-                last_element_before_appsink = self.encoder
+            last_element_before_appsink = videoconvert # Start with videoconvert
+            
+            # Link videoconvert -> encoder
+            if not last_element_before_appsink.link(self.encoder):
+                    raise RuntimeError(f"Failed to link {last_element_before_appsink.get_name()} to encoder ({self.encoder.get_name()}) for {self.stream_id}")
+            last_element_before_appsink = self.encoder # Update last successfully linked element
 
+            # Link encoder -> h264parser (if H264 encoding is used)
             if self.h264parser:
                 if not last_element_before_appsink.link(self.h264parser):
-                    raise RuntimeError(f"Failed to link {last_element_before_appsink.get_name()} to h264parse for {self.stream_id}")
-                last_element_before_appsink = self.h264parser
+                    raise RuntimeError(f"Failed to link {last_element_before_appsink.get_name()} to h264parse ({self.h264parser.get_name()}) for {self.stream_id}")
+                last_element_before_appsink = self.h264parser # Update last successfully linked element
             
+            # Link the last element in the encoding chain to appsink
             if not last_element_before_appsink.link(self.appsink):
                 raise RuntimeError(f"Failed to link {last_element_before_appsink.get_name()} to appsink for {self.stream_id}")
                 
-            self.logger.info(f"GStreamer elements linked successfully for {self.stream_id}")
+            self.logger.info(f"GStreamer elements linked successfully for {self.stream_id} using encoder {self.encoder.get_name()}")
             
         except Exception as e:
-            self.logger.error(f"Failed to create pipeline: {e}")
-            if self.pipeline:
-                self.pipeline.set_state(Gst.State.NULL)
+            self.logger.error(f"Failed to create GStreamer pipeline for stream {self.stream_id}: {e}")
+            if self.pipeline: # Attempt to set the pipeline to NULL state on failure to aid cleanup
+                current_state_result, current_state, pending_state = self.pipeline.get_state(Gst.CLOCK_TIME_NONE)
+                if current_state != Gst.State.NULL:
+                    self.pipeline.set_state(Gst.State.NULL)
+            # Re-raise the exception so it can be handled by the caller (e.g., _handle_add_stream)
             raise
     
     def set_state(self, state):
@@ -256,51 +304,77 @@ class GstPipeline:
                 'bgra8': 'BGRA',
                 'mono8': 'GRAY8',
                 'mono16': 'GRAY16_LE',
-                '16UC1': 'GRAY16_LE',
-                '32FC1': 'GRAY32_FLOAT_LE'
+                '16UC1': 'GRAY16_LE', # Common OpenCV depth format
+                '32FC1': 'GRAY32_FLOAT_LE' # Common OpenCV float format
             }
             
             gst_format = encoding_map.get(msg.encoding)
             if not gst_format:
-                self.logger.error(f"Unsupported ROS image encoding: {msg.encoding}")
+                self.logger.error(f"Unsupported ROS image encoding: {msg.encoding} for stream {self.stream_id}")
                 return False
                 
-            framerate = "30/1"
+            # Framerate can be part of caps, often important for encoders/muxers.
+            # Using a common default, but could be derived from topic rate or config if needed.
+            framerate_str = "30/1" # Defaulting to 30fps for caps
             
             caps_str = (
                 f"video/x-raw,"
                 f"format={gst_format},"
                 f"width={msg.width},"
                 f"height={msg.height},"
-                f"framerate={framerate}"
+                f"framerate={framerate_str}"
             )
             
             caps = Gst.Caps.from_string(caps_str)
-            if not caps:
-                self.logger.error(f"Failed to parse caps string: {caps_str}")
+            if not caps: # Should not happen with well-formed string, but good check
+                self.logger.error(f"Failed to parse caps string: {caps_str} for stream {self.stream_id}")
                 return False
                 
             self.appsrc.set_property("caps", caps)
             self.caps_set = True
-            self.width = msg.width
-            self.height = msg.height
+            self.width = msg.width # Store actual dimensions used for caps
+            self.height = msg.height # Store actual dimensions used for caps
             self.logger.info(f"Set caps for {self.stream_id}: {caps.to_string()}")
             return True
             
         except Exception as e:
-            self.logger.error(f"Error setting caps: {e}")
+            self.logger.error(f"Error setting caps for stream {self.stream_id}: {e}")
             return False
     
     def cleanup(self):
         """Clean up resources used by this pipeline."""
+        self.logger.info(f"Cleaning up pipeline for stream {self.stream_id}...")
         if self.pipeline:
-            self.pipeline.set_state(Gst.State.NULL)
+            # Get current state to avoid errors if already NULL or during async transitions
+            state_change_ret, current_state, pending_state = self.pipeline.get_state(Gst.CLOCK_TIME_NONE) # 0 timeout
+            if current_state != Gst.State.NULL:
+                 self.logger.debug(f"Setting pipeline {self.stream_id} to NULL state for cleanup (current: {current_state.value_name}).")
+                 self.pipeline.set_state(Gst.State.NULL)
+            else:
+                 self.logger.debug(f"Pipeline {self.stream_id} already in NULL state or state retrieval failed ({state_change_ret.value_name}).")
+            self.pipeline = None # Allow garbage collection by removing reference
+
+        # Elements within the pipeline are generally managed by the pipeline's lifecycle.
+        # Resetting internal references for clarity and to release direct holds if any.
+        self.appsrc = None
+        self.encoder = None
+        self.h264parser = None
+        self.appsink = None
+        self.caps_set = False # Reset caps status
+        self.status = 'STOPPED' # Update status to reflect cleanup
+        self.logger.info(f"Pipeline cleanup for stream {self.stream_id} complete.")
 
     def ros_image_callback(self, msg):
         """Callback for ROS Image messages, pushes image into the pipeline."""
-        if not self.appsrc:
-            self.logger.error(f"Cannot push image: appsrc not initialized for {self.stream_id}")
+        if not self.appsrc or not self.pipeline: # Ensure pipeline and appsrc are valid
+            self.logger.error(f"Cannot push image: appsrc or pipeline not initialized for {self.stream_id}")
             return
+
+        # Optional: Check if pipeline is in PLAYING state before pushing.
+        # state_ret, current_gst_state, pending_gst_state = self.pipeline.get_state(Gst.CLOCK_TIME_NONE)
+        # if not (state_ret == Gst.StateChangeReturn.SUCCESS and current_gst_state == Gst.State.PLAYING):
+        #     self.logger.warning(f"Stream '{self.stream_id}' is not in PLAYING state (current: {current_gst_state.value_name if state_ret == Gst.StateChangeReturn.SUCCESS else 'UNKNOWN'}). Dropping frame.")
+        #     return
 
         self.logger.debug(f"ROS Image received for stream '{self.stream_id}', seq={msg.header.stamp.sec}.{msg.header.stamp.nanosec}, size={msg.width}x{msg.height}, encoding={msg.encoding}")
 
@@ -310,29 +384,32 @@ class GstPipeline:
                 return
 
         try:
+            # Ensure data is in bytes format
             if isinstance(msg.data, list):
                 image_bytes = bytes(msg.data)
             elif isinstance(msg.data, bytes):
                 image_bytes = msg.data
-            else:
+            else: # Handles cases like array.array or numpy.ndarray (if tobytes() is available)
                  image_bytes = msg.data.tobytes()
 
             buffer = Gst.Buffer.new_wrapped(image_bytes)
 
+            # Set PTS (Presentation Timestamp) for the buffer
+            # DTS (Decode Timestamp) can be set to Gst.CLOCK_TIME_NONE; GStreamer will manage if not provided.
             buffer.pts = msg.header.stamp.sec * Gst.SECOND + msg.header.stamp.nanosec
-            buffer.dts = Gst.CLOCK_TIME_NONE
+            buffer.dts = Gst.CLOCK_TIME_NONE # Let pipeline elements manage DTS
 
-            self.logger.debug(f"Attempting to create Gst.Buffer for '{self.stream_id}'")
+            self.logger.debug(f"Attempting to push Gst.Buffer for '{self.stream_id}' (PTS: {buffer.pts / Gst.SECOND:.3f}s)")
             ret = self.appsrc.emit("push-buffer", buffer)
             if ret != Gst.FlowReturn.OK:
-                flow_return_str = Gst.flow_return_get_name(ret)
-                self.logger.error(f"push-buffer failed for {self.stream_id}: {flow_return_str} ({ret})")
+                flow_return_str = Gst.flow_return_get_name(ret) # Get human-readable name
+                self.logger.error(f"push-buffer failed for {self.stream_id}: {flow_return_str} (Gst.FlowReturn code: {ret})")
             else:
                 self.logger.debug(f"Successfully pushed buffer for stream '{self.stream_id}'")
 
         except Exception as e:
             self.logger.error(f"Error processing/pushing image to pipeline for {self.stream_id}: {e}")
-            import traceback
+            import traceback # Keep for detailed error logging in development
             self.logger.error(traceback.format_exc())
 
 

@@ -39,8 +39,8 @@ class WebcamPublisher(Node):
     
     def __init__(self, 
                  camera_id: int = 0,
-                 width: int = 640,
-                 height: int = 480,
+                 width: int = 1280,
+                 height: int = 720,
                  fps: float = 30.0,
                  topic_name: str = "camera/image_raw"):
         """
