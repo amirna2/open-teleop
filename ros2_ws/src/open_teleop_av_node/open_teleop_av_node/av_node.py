@@ -40,7 +40,7 @@ class GstPipeline:
                 "bitrate": "bitrate" # nvh264enc uses bitrate (kbps)
             }
         },
-        {
+              {
             "name": "x264enc", 
             "type": "software", 
             "fixed_properties": {
@@ -84,6 +84,7 @@ class GstPipeline:
         self.width = 0
         self.height = 0
         self.h264parser = None # Initialize h264parser
+        self.capsfilter = None # Initialize capsfilter
         
         self._create_pipeline()
     
@@ -166,6 +167,13 @@ class GstPipeline:
         for candidate_config in self.H264_ENCODER_CANDIDATES:
             encoder, chosen_candidate_config = self._attempt_create_encoder(candidate_config, self.parsed_encoder_params)
             if encoder:
+                self.logger.info(f"Selected encoder: {encoder.get_name()} with properties:")
+                for prop in encoder.list_properties():
+                    try:
+                        value = encoder.get_property(prop.name)
+                        self.logger.info(f"  {prop.name}: {value}")
+                    except Exception as e:
+                        self.logger.warning(f"  Could not get property {prop.name}: {e}")
                 return encoder, chosen_candidate_config # Return both encoder and its config
 
         # If loop completes, no encoder was successfully created
@@ -195,7 +203,16 @@ class GstPipeline:
                     # This check is critical as Gst.ElementFactory.make can return None
                     raise RuntimeError(f"Failed to create h264parse element for {self.stream_id}")
                 self.h264parser.set_property("config-interval", -1) # Send SPS/PPS with every IDR frame
-                self.logger.debug(f"Created and configured h264parse for {self.stream_id}")
+                #self.h264parser.set_property("disable-passthrough", True) # Force processing to ensure proper format
+                
+                # Create capsfilter to force byte-stream (Annex-B) format
+                self.capsfilter = Gst.ElementFactory.make("capsfilter", f"caps_{self.stream_id}")
+                if not self.capsfilter:
+                    raise RuntimeError(f"Failed to create capsfilter element for {self.stream_id}")
+                caps = Gst.Caps.from_string("video/x-h264,stream-format=byte-stream,alignment=nal")
+                self.capsfilter.set_property("caps", caps)
+                
+                self.logger.debug(f"Created and configured h264parse and capsfilter for {self.stream_id}")
             else:
                 # If other encoding formats were to be supported, their specific logic would go here.
                 # For now, this node is focused on H264 via this structure.
@@ -234,6 +251,7 @@ class GstPipeline:
             self.pipeline.add(self.encoder) # self.encoder is guaranteed to be valid if we reached here for H264
             if self.h264parser: # Add h264parser if it was created (i.e., for H264)
                 self.pipeline.add(self.h264parser)
+                self.pipeline.add(self.capsfilter) # Add capsfilter after h264parse
             self.pipeline.add(self.appsink)
 
             # Link the elements sequentially
@@ -252,6 +270,11 @@ class GstPipeline:
                 if not last_element_before_appsink.link(self.h264parser):
                     raise RuntimeError(f"Failed to link {last_element_before_appsink.get_name()} to h264parse ({self.h264parser.get_name()}) for {self.stream_id}")
                 last_element_before_appsink = self.h264parser # Update last successfully linked element
+                
+                # Link h264parser -> capsfilter
+                if not last_element_before_appsink.link(self.capsfilter):
+                    raise RuntimeError(f"Failed to link {last_element_before_appsink.get_name()} to capsfilter for {self.stream_id}")
+                last_element_before_appsink = self.capsfilter # Update last successfully linked element
             
             # Link the last element in the encoding chain to appsink
             if not last_element_before_appsink.link(self.appsink):
@@ -359,6 +382,7 @@ class GstPipeline:
         self.appsrc = None
         self.encoder = None
         self.h264parser = None
+        self.capsfilter = None
         self.appsink = None
         self.caps_set = False # Reset caps status
         self.status = 'STOPPED' # Update status to reflect cleanup
@@ -529,6 +553,32 @@ class OpenTeleopAvNode(Node):
                 buffer_size = map_info.size
                 encoded_bytes = map_info.data[:]
                 buffer.unmap(map_info)
+
+                # Log first 32 bytes of encoded frame with NAL unit analysis
+                first_32_bytes = encoded_bytes[:32]
+                hex_bytes = ' '.join([f'{b:02x}' for b in first_32_bytes])
+                
+                # Parse NAL unit type for NVIDIA encoder
+                if len(encoded_bytes) >= 5:  # Need at least 5 bytes for NAL header
+                    nal_length = int.from_bytes(encoded_bytes[0:4], byteorder='big')
+                    nal_type = encoded_bytes[4] & 0x1F  # Last 5 bits are NAL type
+                    nal_type_str = {
+                        1: "Non-IDR",
+                        5: "IDR",
+                        7: "SPS",
+                        8: "PPS",
+                        9: "AUD",
+                        12: "Filler"
+                    }.get(nal_type, f"Unknown({nal_type})")
+                    
+                    self.logger.debug(
+                        f"Appsink ('{stream_id}'): NAL Unit - Type: {nal_type_str}, Length: {nal_length}, "
+                        f"First 32 bytes: {hex_bytes}"
+                    )
+                else:
+                    self.logger.debug(
+                        f"Appsink ('{stream_id}'): First 32 bytes of encoded frame: {hex_bytes}"
+                    )
 
                 self.logger.debug(
                     f"Appsink ('{stream_id}'): Received sample. "
