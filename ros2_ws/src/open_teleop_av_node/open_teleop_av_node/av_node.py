@@ -16,7 +16,7 @@ from sensor_msgs.msg import Image
 from open_teleop_msgs.msg import EncodedFrame, StreamStatus
 from open_teleop_msgs.srv import ManageStream, GetStatus
 from builtin_interfaces.msg import Time
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
 
 # Import GStreamer and GLib
 import gi
@@ -78,6 +78,7 @@ class GstPipeline:
         self.appsrc = None
         self.appsink = None
         self.encoder = None
+        self.queue = None
         self.ros_subscriber = None
         self.status = 'CREATED'
         self.caps_set = False
@@ -202,7 +203,7 @@ class GstPipeline:
                 if not self.h264parser:
                     # This check is critical as Gst.ElementFactory.make can return None
                     raise RuntimeError(f"Failed to create h264parse element for {self.stream_id}")
-                self.h264parser.set_property("config-interval", -1) # Send SPS/PPS with every IDR frame
+                self.h264parser.set_property("config-interval", 1) # Send SPS/PPS every
                 self.h264parser.set_property("disable-passthrough", True) # Force processing to ensure proper format
                 
                 # Create capsfilter to force byte-stream (Annex-B) format
@@ -219,6 +220,13 @@ class GstPipeline:
                 # For now, this node is focused on H264 via this structure.
                 self.logger.error(f"Encoding format '{self.encoding_format}' is not 'video/h264' and is not supported by the current encoder creation logic.")
                 raise NotImplementedError(f"Encoding format '{self.encoding_format}' is not supported by this pipeline configuration.")
+
+            # Create a queue element to buffer frames (attempt to fix video freezes)
+            self.queue = Gst.ElementFactory.make("queue", "queue")
+            self.queue.set_property("leaky", "downstream")
+            self.queue.set_property("max-size-buffers", 2)
+            self.queue.set_property("max-size-bytes", 0)
+            self.queue.set_property("max-size-time", 0)
 
             self.appsink = Gst.ElementFactory.make("appsink", f"appsink_{self.stream_id}")
             if self.appsink: # Standard check for appsink creation
@@ -252,7 +260,8 @@ class GstPipeline:
             self.pipeline.add(self.encoder) # self.encoder is guaranteed to be valid if we reached here for H264
             if self.h264parser: # Add h264parser if it was created (i.e., for H264)
                 self.pipeline.add(self.h264parser)
-                self.pipeline.add(self.capsfilter) # Add capsfilter after h264parse
+                self.pipeline.add(self.capsfilter)
+                self.pipeline.add(self.queue)
             self.pipeline.add(self.appsink)
 
             # Link the elements sequentially
@@ -277,6 +286,11 @@ class GstPipeline:
                     raise RuntimeError(f"Failed to link {last_element_before_appsink.get_name()} to capsfilter for {self.stream_id}")
                 last_element_before_appsink = self.capsfilter # Update last successfully linked element
             
+                # link capsfilter -> queue
+                if not last_element_before_appsink.link(self.queue):
+                    raise RuntimeError(f"Failed to link {last_element_before_appsink.get_name()} to queue for {self.stream_id}")
+                last_element_before_appsink = self.queue
+                
             # Link the last element in the encoding chain to appsink
             if not last_element_before_appsink.link(self.appsink):
                 raise RuntimeError(f"Failed to link {last_element_before_appsink.get_name()} to appsink for {self.stream_id}")
@@ -384,8 +398,9 @@ class GstPipeline:
         self.encoder = None
         self.h264parser = None
         self.capsfilter = None
+        self.queue = None
         self.appsink = None
-        self.caps_set = False # Reset caps status
+        self.caps_set = False 
         self.status = 'STOPPED' # Update status to reflect cleanup
         self.logger.info(f"Pipeline cleanup for stream {self.stream_id} complete.")
 
@@ -712,7 +727,8 @@ class OpenTeleopAvNode(Node):
             qos = QoSProfile(
                 reliability=QoSReliabilityPolicy.BEST_EFFORT,
                 history=QoSHistoryPolicy.KEEP_LAST,
-                depth=1
+                depth=1,
+                durability=QoSDurabilityPolicy.VOLATILE  # Match publisher
             )
             
             pipeline.ros_subscriber = self.create_subscription(

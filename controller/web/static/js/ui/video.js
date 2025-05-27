@@ -44,47 +44,26 @@ function isKeyFrame(uint8Array) {
   return false;
 }
 
-// ——————————————————————————
-// 1️⃣ initVideo (called by main.js)
-// ——————————————————————————
 function initVideo() {
-  debugLog("Initializing Video with WebCodecs…");
+    debugLog("Initializing Video with WebCodecs…");
 
-  videoStreamingActive = true;
-  const videoElement = document.getElementById("video-player");
-  if (!videoElement) {
-    console.error('❌ <video id="video-player"> not found!');
-    return;
-  }
-
-  // Check WebCodecs support
-  if (!window.VideoDecoder) {
-    console.error('❌ WebCodecs not supported in this browser');
-    return;
-  }
-
-  // Replace video with canvas
-  canvas = document.createElement('canvas');
-  canvas.id = 'video-canvas';
-  canvas.style.width = '100%';
-  canvas.style.height = '100%';
-  canvas.style.backgroundColor = 'black';
-  videoElement.parentNode.replaceChild(canvas, videoElement);
-  ctx = canvas.getContext('2d');
-
-  // Initialize WebCodecs decoder
-  decoder = new VideoDecoder({
-    output: handleDecodedFrame,
-    error: (error) => {
-      console.error('❌ WebCodecs decoder error:', error);
-      stats.decodeErrors++;
+    const videoElement = document.getElementById("video-player");
+    if (!videoElement) {
+        console.error('❌ <video id="video-player"> not found!');
+        return;
     }
-  });
 
-  // Don't configure yet - wait for SPS/PPS
-  debugLog("✅ WebCodecs decoder created, waiting for SPS/PPS");
+    // Replace video with canvas
+    canvas = document.createElement('canvas');
+    canvas.id = 'video-canvas';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.backgroundColor = 'black';
+    videoElement.parentNode.replaceChild(canvas, videoElement);
+    ctx = canvas.getContext('2d');
 
-  connectVideoWebSocket();
+    videoStreamingActive = true;
+    connectVideoWebSocket();
 }
 
 function handleDecodedFrame(frame) {
@@ -411,7 +390,7 @@ function initializeVideoInfoDisplay() {
 }
 
 function updateVideoStats() {
-  const now = Date.now();
+  const now = performance.now();
   if (now - stats.lastStatsUpdate < 1000) return;
   stats.lastStatsUpdate = now;
 

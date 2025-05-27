@@ -412,7 +412,7 @@ func (d *MessageDispatcher) handleRawFlatbuffer(data []byte) ([]byte, error) {
 			encodingFormat := string(metadata.EncodingFormat())
 			frameId := string(metadata.FrameId())
 
-			d.logger.Infof("Video metadata: seq=%d, type=%s, %dx%d, format=%s, frame_id=%s, orig_ts=%d",
+			d.logger.Debugf("Video metadata: seq=%d, type=%s, %dx%d, format=%s, frame_id=%s, orig_ts=%d",
 				metadata.SequenceNumber(),
 				frameTypeStr,
 				metadata.Width(),

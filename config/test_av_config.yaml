@@ -50,7 +50,7 @@ topic_mappings:
       height: 480
       framerate: 30
       bitrate: 2000 # kbps
-      gop_size: 60 # frames
+      gop_size: 30
     direction: "OUTBOUND"
     priority: "HIGH"
   
