@@ -22,7 +22,7 @@ import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, QoSDurabilityPolicy
 from sensor_msgs.msg import Image
 
 
@@ -66,7 +66,8 @@ class ImageViewer(Node):
         qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
-            depth=1
+            depth=10,
+            durability=QoSDurabilityPolicy.VOLATILE
         )
         
         self.image_subscription = self.create_subscription(

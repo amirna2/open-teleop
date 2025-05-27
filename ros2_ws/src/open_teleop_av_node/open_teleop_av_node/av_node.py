@@ -727,7 +727,7 @@ class OpenTeleopAvNode(Node):
             qos = QoSProfile(
                 reliability=QoSReliabilityPolicy.BEST_EFFORT,
                 history=QoSHistoryPolicy.KEEP_LAST,
-                depth=1,
+                depth=10,
                 durability=QoSDurabilityPolicy.VOLATILE  # Match publisher
             )
             

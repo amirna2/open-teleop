@@ -46,11 +46,11 @@ topic_mappings:
     message_type: "sensor_msgs/msg/Image"
     encoder_params:
       encoding_format: "video/h264"
-      width: 640
-      height: 480
-      framerate: 30
+      width: 1920 
+      height: 1080 
+      framerate: 10
       bitrate: 2000 # kbps
-      gop_size: 30
+      gop_size: 10
     direction: "OUTBOUND"
     priority: "HIGH"
   

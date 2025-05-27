@@ -78,8 +78,9 @@ class WebcamPublisher(Node):
         self._initialize_camera()
         
         self.get_logger().info(
-            f"Webcam publisher initialized - Camera: {camera_id}, "
-            f"Resolution: {width}x{height}, FPS: {fps}, Topic: {topic_name}"
+            f"Webcam publisher initialized - Camera: {self.camera_id}, "
+            f"Resolution: {self.width}x{self.height}, FPS: {self.fps}, "
+            f"Topic: {self.topic_name}"
         )
 
     def _setup_publisher(self) -> None:
@@ -106,16 +107,46 @@ class WebcamPublisher(Node):
             True if camera initialized successfully, False otherwise
         """
         try:
-            self.cap = cv2.VideoCapture(self.camera_id)
+            # Attempt to use V4L2 backend directly
+            self.get_logger().info("Attempting to open camera using cv2.CAP_V4L2 backend...")
+            self.cap = cv2.VideoCapture(self.camera_id, cv2.CAP_V4L2)
             
             if not self.cap.isOpened():
-                self.get_logger().error(f"Failed to open camera {self.camera_id}")
+                self.get_logger().warn("Failed to open camera with cv2.CAP_V4L2 backend. Falling back to default backend.")
+                self.cap = cv2.VideoCapture(self.camera_id) # Fallback to default
+
+            if not self.cap.isOpened():
+                self.get_logger().error(f"Failed to open camera {self.camera_id} with any backend.")
                 return False
             
-            # Set camera properties
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-            self.cap.set(cv2.CAP_PROP_FPS, self.fps)
+            # Store requested dimensions for clarity in logging
+            requested_width = self.width
+            requested_height = self.height
+            requested_fps = self.fps
+
+            self.get_logger().info(f"Attempting to set camera resolution to {requested_width}x{requested_height} @ {requested_fps:.1f} FPS")
+
+            # Attempt to set the pixel format (FOURCC)
+            # Trying MJPG as v4l2-ctl shows it supports 1280x720 @ 30fps
+            fourcc_code = cv2.VideoWriter_fourcc(*'MJPG')
+            success_fourcc = self.cap.set(cv2.CAP_PROP_FOURCC, fourcc_code)
+            if success_fourcc:
+                self.get_logger().info(f"Successfully requested FOURCC: MJPG")
+            else:
+                self.get_logger().warn(f"Failed to set FOURCC MJPG. OpenCV returned failure.")
+
+            # Set camera properties and check success
+            success_width = self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(requested_width))
+            if not success_width:
+                self.get_logger().warn(f"Failed to set frame width to {requested_width}. OpenCV returned failure.")
+            
+            success_height = self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(requested_height))
+            if not success_height:
+                self.get_logger().warn(f"Failed to set frame height to {requested_height}. OpenCV returned failure.")
+            
+            success_fps = self.cap.set(cv2.CAP_PROP_FPS, float(requested_fps))
+            if not success_fps:
+                self.get_logger().warn(f"Failed to set FPS to {requested_fps:.1f}. OpenCV returned failure.")
             
             # Verify actual settings
             actual_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -123,11 +154,12 @@ class WebcamPublisher(Node):
             actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
             
             self.get_logger().info(
-                f"Camera initialized - Actual resolution: {actual_width}x{actual_height}, "
-                f"Actual FPS: {actual_fps:.1f}"
+                f"Camera successfully initialized. "
+                f"Requested: {requested_width}x{requested_height} @ {requested_fps:.1f} FPS. "
+                f"Actual: {actual_width}x{actual_height} @ {actual_fps:.1f} FPS."
             )
             
-            # Update dimensions to actual values
+            # Update dimensions to actual values for the rest of the node's operations
             self.width = actual_width
             self.height = actual_height
             
@@ -163,7 +195,7 @@ class WebcamPublisher(Node):
         msg.step = rgb_image.shape[1] * 3  # 3 bytes per pixel for RGB
         
         # Flatten image data
-        msg.data = rgb_image.flatten().tolist()
+        msg.data = np.array(rgb_image).tobytes()
         
         return msg
 
