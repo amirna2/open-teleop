@@ -67,6 +67,17 @@ class WebcamPublisher(Node):
         self.frame_count = 0
         self.start_time = time.time()
         
+        # Processing time statistics
+        self.total_processing_time = 0.0
+        self.min_processing_time = float('inf')
+        self.max_processing_time = 0.0
+        
+        # Detailed timing statistics
+        self.total_capture_time = 0.0
+        self.total_conversion_time = 0.0
+        self.total_message_creation_time = 0.0
+        self.total_publish_time = 0.0
+        
         # Threading control
         self.running = False
         self.capture_thread: Optional[threading.Thread] = None
@@ -89,7 +100,7 @@ class WebcamPublisher(Node):
         qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,  # Prioritize low latency over reliability
             history=HistoryPolicy.KEEP_LAST,
-            depth=1,  # Only keep latest frame
+            depth=10,  # Only keep latest frame
             durability=DurabilityPolicy.VOLATILE  # Don't persist old frames
         )
         
@@ -126,14 +137,27 @@ class WebcamPublisher(Node):
 
             self.get_logger().info(f"Attempting to set camera resolution to {requested_width}x{requested_height} @ {requested_fps:.1f} FPS")
 
-            # Attempt to set the pixel format (FOURCC)
-            # Trying MJPG as v4l2-ctl shows it supports 1280x720 @ 30fps
-            fourcc_code = cv2.VideoWriter_fourcc(*'MJPG')
-            success_fourcc = self.cap.set(cv2.CAP_PROP_FOURCC, fourcc_code)
-            if success_fourcc:
-                self.get_logger().info(f"Successfully requested FOURCC: MJPG")
+            # Set buffer size to minimize latency
+            buffer_success = self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            if buffer_success:
+                self.get_logger().info("Successfully set buffer size to 1")
             else:
-                self.get_logger().warn(f"Failed to set FOURCC MJPG. OpenCV returned failure.")
+                self.get_logger().warn("Failed to set buffer size to 1")
+
+            # Try YUYV format first (uncompressed, potentially faster)
+            fourcc_yuyv = cv2.VideoWriter_fourcc(*'YUYV')
+            success_yuyv = self.cap.set(cv2.CAP_PROP_FOURCC, fourcc_yuyv)
+            if success_yuyv:
+                self.get_logger().info("Successfully set FOURCC: YUYV")
+            else:
+                self.get_logger().warn("Failed to set FOURCC YUYV, trying MJPG...")
+                # Fallback to MJPG
+                fourcc_mjpg = cv2.VideoWriter_fourcc(*'MJPG')
+                success_mjpg = self.cap.set(cv2.CAP_PROP_FOURCC, fourcc_mjpg)
+                if success_mjpg:
+                    self.get_logger().info("Successfully set FOURCC: MJPG")
+                else:
+                    self.get_logger().warn("Failed to set any specific FOURCC format")
 
             # Set camera properties and check success
             success_width = self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(requested_width))
@@ -152,11 +176,17 @@ class WebcamPublisher(Node):
             actual_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             actual_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
+            actual_fourcc = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+            actual_buffer_size = int(self.cap.get(cv2.CAP_PROP_BUFFERSIZE))
+            
+            # Convert FOURCC to readable format
+            fourcc_str = "".join([chr((actual_fourcc >> 8 * i) & 0xFF) for i in range(4)])
             
             self.get_logger().info(
                 f"Camera successfully initialized. "
                 f"Requested: {requested_width}x{requested_height} @ {requested_fps:.1f} FPS. "
-                f"Actual: {actual_width}x{actual_height} @ {actual_fps:.1f} FPS."
+                f"Actual: {actual_width}x{actual_height} @ {actual_fps:.1f} FPS, "
+                f"Format: {fourcc_str}, Buffer size: {actual_buffer_size}"
             )
             
             # Update dimensions to actual values for the rest of the node's operations
@@ -169,7 +199,7 @@ class WebcamPublisher(Node):
             self.get_logger().error(f"Camera initialization failed: {str(e)}")
             return False
 
-    def _create_image_message(self, cv_image: np.ndarray) -> Image:
+    def _create_image_message(self, cv_image: np.ndarray) -> tuple[Image, float, float]:
         """
         Convert OpenCV image to ROS Image message.
         
@@ -177,12 +207,15 @@ class WebcamPublisher(Node):
             cv_image: OpenCV image in BGR format
             
         Returns:
-            ROS Image message
+            Tuple of (ROS Image message, conversion_time, message_creation_time)
         """
-        # Convert BGR to RGB (ROS standard)
+        # Time BGR to RGB conversion
+        conversion_start = time.time()
         rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+        conversion_time = time.time() - conversion_start
         
-        # Create ROS Image message
+        # Time ROS message creation
+        message_start = time.time()
         msg = Image()
         msg.header = Header()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -196,8 +229,9 @@ class WebcamPublisher(Node):
         
         # Flatten image data
         msg.data = np.array(rgb_image).tobytes()
+        message_creation_time = time.time() - message_start
         
-        return msg
+        return msg, conversion_time, message_creation_time
 
     def _capture_and_publish(self) -> None:
         """Main capture loop running in separate thread."""
@@ -213,30 +247,68 @@ class WebcamPublisher(Node):
                         time.sleep(1.0)  # Wait before retry
                         continue
                 
-                # Capture frame
+                # Time the camera capture separately
+                capture_start = time.time()
                 ret, frame = self.cap.read()
+                capture_time = time.time() - capture_start
                 
                 if not ret:
                     self.get_logger().warn("Failed to capture frame")
                     continue
                 
-                # Create and publish ROS message
-                image_msg = self._create_image_message(frame)
-                self.image_publisher.publish(image_msg)
+                # Create and publish ROS message with detailed timing
+                image_msg, conversion_time, message_creation_time = self._create_image_message(frame)
                 
-                # Update statistics
+                # Time the publishing step
+                publish_start = time.time()
+                self.image_publisher.publish(image_msg)
+                publish_time = time.time() - publish_start
+                
+                # Calculate total processing time (from capture start to publish end)
+                processing_time = time.time() - capture_start
+                
+                # Update processing time statistics
+                self.total_processing_time += processing_time
+                self.min_processing_time = min(self.min_processing_time, processing_time)
+                self.max_processing_time = max(self.max_processing_time, processing_time)
+                
+                # Update detailed timing statistics
+                self.total_capture_time += capture_time
+                self.total_conversion_time += conversion_time
+                self.total_message_creation_time += message_creation_time
+                self.total_publish_time += publish_time
+                
+                # Update frame statistics
                 self.frame_count += 1
                 
                 # Log periodic statistics
-                if self.frame_count % (self.fps * 15) == 0:  # Every 5 seconds
+                if self.frame_count % (self.fps * 15) == 0:  # Every 15 seconds
                     elapsed = time.time() - self.start_time
                     actual_fps = self.frame_count / elapsed if elapsed > 0 else 0
                     subscribers = self.image_publisher.get_subscription_count()
                     
+                    # Calculate average processing times
+                    avg_processing_time = self.total_processing_time / self.frame_count if self.frame_count > 0 else 0
+                    avg_capture_time = self.total_capture_time / self.frame_count if self.frame_count > 0 else 0
+                    avg_conversion_time = self.total_conversion_time / self.frame_count if self.frame_count > 0 else 0
+                    avg_message_time = self.total_message_creation_time / self.frame_count if self.frame_count > 0 else 0
+                    avg_publish_time = self.total_publish_time / self.frame_count if self.frame_count > 0 else 0
+                    
+                    # Calculate frame size in MB
+                    frame_size_mb = (self.width * self.height * 3) / (1024 * 1024)
+                    
                     self.get_logger().info(
                         f"Published {self.frame_count} frames - "
                         f"Actual FPS: {actual_fps:.1f}, "
-                        f"Subscribers: {subscribers}"
+                        f"Subscribers: {subscribers}, "
+                        f"Frame size: {frame_size_mb:.2f}MB, "
+                        f"Processing time - Total: {avg_processing_time*1000:.2f}ms "
+                        f"(Capture: {avg_capture_time*1000:.2f}ms, "
+                        f"BGR→RGB: {avg_conversion_time*1000:.2f}ms, "
+                        f"Message: {avg_message_time*1000:.2f}ms, "
+                        f"Publish: {avg_publish_time*1000:.2f}ms), "
+                        f"Min: {self.min_processing_time*1000:.2f}ms, "
+                        f"Max: {self.max_processing_time*1000:.2f}ms"
                     )
                 
                 # Maintain target frame rate
@@ -289,9 +361,22 @@ class WebcamPublisher(Node):
         if self.frame_count > 0:
             elapsed = time.time() - self.start_time
             avg_fps = self.frame_count / elapsed if elapsed > 0 else 0
+            avg_processing_time = self.total_processing_time / self.frame_count
+            avg_capture_time = self.total_capture_time / self.frame_count
+            avg_conversion_time = self.total_conversion_time / self.frame_count
+            avg_message_time = self.total_message_creation_time / self.frame_count
+            avg_publish_time = self.total_publish_time / self.frame_count
+            
             self.get_logger().info(
                 f"Session complete - Total frames: {self.frame_count}, "
-                f"Average FPS: {avg_fps:.1f}, Duration: {elapsed:.1f}s"
+                f"Average FPS: {avg_fps:.1f}, Duration: {elapsed:.1f}s, "
+                f"Processing time - Total: {avg_processing_time*1000:.2f}ms "
+                f"(Capture: {avg_capture_time*1000:.2f}ms, "
+                f"BGR→RGB: {avg_conversion_time*1000:.2f}ms, "
+                f"Message: {avg_message_time*1000:.2f}ms, "
+                f"Publish: {avg_publish_time*1000:.2f}ms), "
+                f"Min: {self.min_processing_time*1000:.2f}ms, "
+                f"Max: {self.max_processing_time*1000:.2f}ms"
             )
         
         self.destroy_node()
