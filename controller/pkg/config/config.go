@@ -16,6 +16,7 @@ type Config struct {
 	Controller    ControllerConfig `yaml:"controller" json:"controller"`
 	ZeroMQ        ZeroMQConfig     `yaml:"zeromq" json:"zeromq"`
 	TopicMappings []TopicMapping   `yaml:"topic_mappings" json:"topic_mappings"`
+	MediaMappings MediaMappings    `yaml:"media_mappings" json:"media_mappings"`
 	Defaults      DefaultsConfig   `yaml:"defaults" json:"defaults"`
 	ThrottleRates ThrottleConfig   `yaml:"throttle_rates" json:"throttle_rates"`
 }
@@ -53,6 +54,32 @@ type TopicMapping struct {
 	Direction     string                 `yaml:"direction" json:"direction"`
 	SourceType    string                 `yaml:"source_type" json:"source_type"`
 	EncoderParams map[string]interface{} `yaml:"encoder_params,omitempty" json:"encoder_params,omitempty"`
+}
+
+// MediaMappings represents the media gateway configuration sections
+type MediaMappings struct {
+	Video []VideoMapping `yaml:"video" json:"video"`
+	Audio []AudioMapping `yaml:"audio" json:"audio"`
+}
+
+// VideoMapping represents a video stream configuration for media gateway
+type VideoMapping struct {
+	TopicID        string                 `yaml:"topic_id" json:"topic_id"`
+	DeviceID       string                 `yaml:"device_id" json:"device_id"`
+	OttTopic       string                 `yaml:"ott" json:"ott"`
+	EncodingFormat string                 `yaml:"encoding_format" json:"encoding_format"`
+	Priority       string                 `yaml:"priority" json:"priority"`
+	EncoderParams  map[string]interface{} `yaml:"encoder_params,omitempty" json:"encoder_params,omitempty"`
+}
+
+// AudioMapping represents an audio stream configuration for media gateway
+type AudioMapping struct {
+	TopicID        string                 `yaml:"topic_id" json:"topic_id"`
+	DeviceID       string                 `yaml:"device_id" json:"device_id"`
+	OttTopic       string                 `yaml:"ott" json:"ott"`
+	EncodingFormat string                 `yaml:"encoding_format" json:"encoding_format"`
+	Priority       string                 `yaml:"priority" json:"priority"`
+	EncoderParams  map[string]interface{} `yaml:"encoder_params,omitempty" json:"encoder_params,omitempty"`
 }
 
 // DefaultsConfig holds default values for topic mappings
@@ -118,6 +145,46 @@ func (c *Config) GetTopicMappingByOttTopic(ottTopic string) (TopicMapping, bool)
 	}
 
 	return TopicMapping{}, false
+}
+
+// GetVideoMappingByOttTopic returns a video mapping for a specific Open-Teleop topic
+func (c *Config) GetVideoMappingByOttTopic(ottTopic string) (VideoMapping, bool) {
+	for _, mapping := range c.MediaMappings.Video {
+		if mapping.OttTopic == ottTopic {
+			return mapping, true
+		}
+	}
+	return VideoMapping{}, false
+}
+
+// GetAudioMappingByOttTopic returns an audio mapping for a specific Open-Teleop topic
+func (c *Config) GetAudioMappingByOttTopic(ottTopic string) (AudioMapping, bool) {
+	for _, mapping := range c.MediaMappings.Audio {
+		if mapping.OttTopic == ottTopic {
+			return mapping, true
+		}
+	}
+	return AudioMapping{}, false
+}
+
+// GetVideoMappingByDeviceID returns a video mapping for a specific device ID
+func (c *Config) GetVideoMappingByDeviceID(deviceID string) (VideoMapping, bool) {
+	for _, mapping := range c.MediaMappings.Video {
+		if mapping.DeviceID == deviceID {
+			return mapping, true
+		}
+	}
+	return VideoMapping{}, false
+}
+
+// GetAudioMappingByDeviceID returns an audio mapping for a specific device ID
+func (c *Config) GetAudioMappingByDeviceID(deviceID string) (AudioMapping, bool) {
+	for _, mapping := range c.MediaMappings.Audio {
+		if mapping.DeviceID == deviceID {
+			return mapping, true
+		}
+	}
+	return AudioMapping{}, false
 }
 
 // applyDefaults merges default values into a topic mapping where fields are empty

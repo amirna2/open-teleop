@@ -46,11 +46,11 @@ topic_mappings:
     message_type: "sensor_msgs/msg/Image"
     encoder_params:
       encoding_format: "video/h264"
-      width: 1920 
-      height: 1080 
-      framerate: 10
+      width: 640
+      height: 480
+      framerate: 30
       bitrate: 2000 # kbps
-      gop_size: 10
+      gop_size: 30
     direction: "OUTBOUND"
     priority: "HIGH"
   
@@ -67,6 +67,69 @@ topic_mappings:
       gop_size: 30 # frames
     direction: "OUTBOUND"
     priority: "STANDARD"
+
+# Media Gateway mappings (hardware devices -> Open Teleop protocol)
+media_mappings:
+  video:
+    - device_id: "video0"
+      ott: "teleop.video.navigation_camera"
+      topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0007"
+      encoding_format: "video/h264"
+      encoder_params:
+        width: 1920
+        height: 1080
+        framerate: 30
+        bitrate: 4000
+        gop_size: 15
+        profile: "baseline"
+        preset: "ultrafast"
+      priority: "HIGH"
+    
+    - device_id: "video1"
+      ott: "teleop.video.rear_camera"
+      topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0008"
+      encoding_format: "video/h264"
+      encoder_params:
+        width: 1280
+        height: 720
+        framerate: 15
+        bitrate: 2000
+        gop_size: 15
+        profile: "baseline"
+        preset: "fast"
+      priority: "STANDARD"
+    
+    - device_id: "video2"
+      ott: "teleop.video.overview_camera"
+      topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0009"
+      encoding_format: "video/mjpeg"
+      encoder_params:
+        width: 640
+        height: 480
+        framerate: 10
+        quality: 80
+      priority: "LOW"
+
+  audio:
+    - device_id: "audio0"
+      ott: "teleop.audio.main_microphone"
+      topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0010"
+      encoding_format: "audio/opus"
+      encoder_params:
+        bitrate: 64000
+        sample_rate: 48000
+        channels: 1
+      priority: "STANDARD"
+    
+    - device_id: "audio1"
+      ott: "teleop.audio.ambient_microphone"
+      topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0011"
+      encoding_format: "audio/opus"
+      encoder_params:
+        bitrate: 32000
+        sample_rate: 48000
+        channels: 1
+      priority: "LOW"
 
 # Throttling settings per priority level (0 = no throttling)
 throttle_rates:

@@ -60,10 +60,19 @@ export PYTHONPATH="$MEDIA_GATEWAY_DIR:$PYTHONPATH"
 # Create log directories
 mkdir -p "$PROJECT_ROOT/logs/gstreamer-dots"
 
+# Default config path if not provided
+DEFAULT_CONFIG="config/media-gateway-config.yaml"
+
 print_status "Launching Open Teleop Media Gateway..."
 
-# Execute the media gateway with all passed arguments
-python -m media_gateway.main "$@"
+# If no arguments provided, use default config path
+if [ $# -eq 0 ]; then
+    print_status "Using default config: $DEFAULT_CONFIG"
+    python -m media_gateway --config-path "$DEFAULT_CONFIG"
+else
+    # Execute the media gateway with passed arguments
+    python -m media_gateway "$@"
+fi
 
 EXIT_CODE=$?
 if [ $EXIT_CODE -eq 0 ]; then
