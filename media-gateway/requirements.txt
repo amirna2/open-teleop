@@ -1,0 +1,31 @@
+# Core dependencies
+# Note: PyGObject is installed via system packages (apt install python3-gi)
+pyzmq>=24.0.0              # ZeroMQ Python bindings
+PyYAML>=6.0                # YAML configuration parsing
+requests>=2.28.0           # HTTP requests for config fetching
+flatbuffers>=2.0.0         # Flatbuffer serialization (same as A/V Node)
+
+# Device discovery and management
+pyudev>=0.23.0             # Linux device discovery
+v4l2py>=0.2.0              # V4L2 device capabilities querying
+
+# Audio support (optional - fallback if system packages aren't available)
+# pyalsaaudio>=0.10.0        # ALSA audio device management
+
+# Development and testing
+pytest>=7.0.0              # Unit testing framework
+pytest-asyncio>=0.21.0     # Async testing support
+pytest-mock>=3.10.0        # Mocking for tests
+
+# Logging and monitoring
+structlog>=22.3.0          # Structured logging
+psutil>=5.9.0              # System monitoring (CPU, memory usage)
+
+# Optional: Performance profiling
+# cProfile                   # Built-in Python profiler
+# line_profiler>=4.0.0       # Line-by-line profiling
+
+# Optional: Type checking (development)
+# mypy>=1.0.0                # Static type checking
+# types-PyYAML>=6.0.0        # Type stubs for PyYAML
+# types-requests>=2.28.0     # Type stubs for requests 
