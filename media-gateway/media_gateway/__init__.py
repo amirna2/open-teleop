@@ -1,14 +1,13 @@
 """
 Open Teleop Media Gateway
 
-High-performance media gateway for capturing audio/video from hardware devices
-and streaming them to the Open Teleop platform.
+Provides direct hardware audio/video capture for Open Teleop systems,
+bypassing ROS2 transport limitations for production teleoperation.
 """
 
 __version__ = "0.1.0"
-__author__ = "Open Teleop Contributors"
-__email__ = ""
 
-from .main import MediaGateway
+# Import main entry point function instead of MediaGateway class
+from .main import main
 
-__all__ = ["MediaGateway"] 
+__all__ = ["main", "__version__"] 

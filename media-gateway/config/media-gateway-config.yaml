@@ -1,0 +1,44 @@
+# config/media-gateway-config.yaml
+# Bootstrap configuration for the Media Gateway
+
+media_gateway:
+  # ZeroMQ configuration for connecting to the controller
+  zmq:
+    controller_address: "tcp://localhost:5555"
+    publish_address: "tcp://localhost:5556"
+    message_buffer_size: 1000
+    reconnect_interval_ms: 1000
+    
+  # Default stream settings if not specified in Controller config
+  defaults:
+    priority: "STANDARD"
+    encoding_format: "video/h264"
+    video_bitrate: 2000  # kbps
+    audio_bitrate: 64000  # bps
+    
+  # Device discovery settings
+  device_discovery:
+    auto_discover_on_startup: true
+    publish_device_list: true
+    device_list_topic: "teleop.media.available_sources"
+    hotplug_monitoring: false  # Future feature
+    
+  # GStreamer settings
+  gstreamer:
+    debug_level: 2  # 0=none, 1=error, 2=warning, 3=info, 4=debug, 5=trace
+    debug_dump_dot_files: false
+    buffer_time_ms: 200
+    latency_ms: 100
+    
+  # Performance monitoring
+  performance:
+    enable_monitoring: true
+    log_frame_stats: false
+    stats_interval_seconds: 60
+    
+  # Logger configuration
+  logging:
+    level: "INFO"
+    log_to_file: true
+    log_path: "/tmp/open_teleop_logs"
+    log_rotation_days: 7 

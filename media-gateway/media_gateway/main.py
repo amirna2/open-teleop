@@ -1,259 +1,290 @@
 #!/usr/bin/env python3
 """
-Media Gateway Main Entry Point
+Media Gateway - Main Entry Point
 
-This module provides the main entry point and orchestration for the Media Gateway.
+Follows the EXACT same pattern as ros-gateway/gateway_node.py
 """
 
-import argparse
-import asyncio
-import logging
-import signal
+import os
 import sys
-from typing import Optional
+import argparse
+import yaml
+import json
+import time
+import logging
+from pathlib import Path
 
-import structlog
+from media_gateway.zeromq_client.zmq_client import ZmqClient
 
-from .config.manager import ConfigManager
-from .devices.manager import DeviceManager
-from .pipelines.manager import PipelineManager
-from .routing.frame_router import FrameRouter
-from .transport.connection_manager import ConnectionManager
+
+def load_config_from_yaml(config_path, logger):
+    """Load configuration from a YAML file. (Same as ros-gateway)"""
+    logger.info(f"Attempting to load configuration from: {config_path}")
+    try:
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+            if config:
+                logger.info(f"Successfully loaded configuration from {config_path}")
+                return config
+            else:
+                logger.warning(f"Configuration file {config_path} is empty.")
+                return {}
+    except FileNotFoundError:
+        logger.error(f"Configuration file not found: {config_path}")
+        return {}
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing configuration file {config_path}: {e}")
+        return {}
+    except Exception as e:
+        logger.error(f"Unexpected error loading configuration file {config_path}: {e}")
+        return {}
+
+
+def setup_logging(bootstrap_config):
+    """Setup logging based on bootstrap config. (Same pattern as ros-gateway)"""
+    logging_config = bootstrap_config.get('media_gateway', {}).get('logging', {})
+    
+    log_level = getattr(logging, logging_config.get('level', 'INFO').upper())
+    log_to_file = logging_config.get('log_to_file', True)
+    log_path = logging_config.get('log_path', '/tmp/open_teleop_logs')
+    
+    if log_to_file:
+        log_dir = Path(log_path)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        logging.basicConfig(
+            level=log_level,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(log_dir / "media-gateway.log"),
+                logging.StreamHandler(sys.stdout)
+            ]
+        )
+    else:
+        logging.basicConfig(
+            level=log_level,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[logging.StreamHandler(sys.stdout)]
+        )
 
 
 class MediaGateway:
     """
-    Main Media Gateway class that orchestrates all components.
+    Media Gateway for Open-Teleop.
     
-    This class provides the high-level coordination between configuration,
-    device discovery, pipeline management, and frame routing.
+    Follows the EXACT same pattern as ros-gateway/gateway_node.py
     """
     
-    def __init__(self, controller_url: str, debug: bool = False):
-        """Initialize the Media Gateway.
+    def __init__(self, config_path):
+        self.logger = logging.getLogger(__name__)
         
-        Args:
-            controller_url: URL of the Open Teleop Controller
-            debug: Enable debug logging
-        """
-        self.controller_url = controller_url
-        self.debug = debug
-        self.logger = structlog.get_logger(__name__)
-        self.is_running = False
+        # Load bootstrap configuration from YAML file (same as ros-gateway)
+        self.bootstrap_config = load_config_from_yaml(config_path, self.logger)
         
-        # Core components (initialized in start())
-        self.config_manager: Optional[ConfigManager] = None
-        self.device_manager: Optional[DeviceManager] = None
-        self.pipeline_manager: Optional[PipelineManager] = None
-        self.connection_manager: Optional[ConnectionManager] = None
-        self.frame_router: Optional[FrameRouter] = None
+        # Configure logging based on bootstrap config
+        setup_logging(self.bootstrap_config)
         
-        # Setup signal handling
-        self._setup_signal_handlers()
+        self.logger.info('='*80)
+        self.logger.info('Hello, I am the Media Gateway for Open-Teleop!')
+        self.logger.info('='*80)
+        self.logger.info('Starting Media Gateway for Open-Teleop')
+        self.logger.info(f'Using bootstrap config file: {config_path}')
         
-    def _setup_signal_handlers(self):
-        """Setup graceful shutdown signal handlers."""
-        def signal_handler(signum, frame):
-            self.logger.info("Received shutdown signal", signal=signum)
-            asyncio.create_task(self.stop())
+        # Get ZeroMQ configuration (ENV > YAML > Default) - same as ros-gateway
+        zmq_config = self.bootstrap_config.get('media_gateway', {}).get('zmq', {})
+        controller_address = os.environ.get('TELEOP_ZMQ_CONTROLLER_ADDRESS') or zmq_config.get('controller_address', 'tcp://localhost:5555')
+        publish_address = os.environ.get('TELEOP_ZMQ_PUBLISH_ADDRESS') or zmq_config.get('publish_address', 'tcp://localhost:5556')
+        message_buffer_size = int(os.environ.get('TELEOP_ZMQ_BUFFER_SIZE') or zmq_config.get('message_buffer_size', 1000))
+        reconnect_interval_ms = int(os.environ.get('TELEOP_ZMQ_RECONNECT_INTERVAL_MS') or zmq_config.get('reconnect_interval_ms', 1000))
+        
+        self.logger.info(f"Using ZMQ controller address: {controller_address}")
+        self.logger.info(f"Using ZMQ publish address: {publish_address}")
+        
+        # Initialize the ZeroMQ client (same as ros-gateway)
+        self.zmq_client = ZmqClient(
+            controller_address=controller_address,
+            publish_address=publish_address,
+            buffer_size=message_buffer_size,
+            reconnect_interval_ms=reconnect_interval_ms,
+            logger=self.logger
+        )
+        
+        # Request operational configuration from the controller (same as ros-gateway)
+        self.config = self.request_configuration()
+        
+        # Check if fallback was used (same as ros-gateway)
+        if self.config.get("config_id") == "default":
+            self.logger.warning("Operational config fetched using fallback mechanism.")
+        else:
+            self.logger.info(f"Loaded operational configuration version: {self.config.get('version')}")
+            self.logger.info(f"Config ID: {self.config.get('config_id')}")
+            self.logger.info(f"Robot ID: {self.config.get('robot_id')}")
             
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+            # Log media mappings (parallel to topic_mappings in ros-gateway)
+            media_mappings = self.config.get('media_mappings', {})
+            video_streams = media_mappings.get('video', [])
+            audio_streams = media_mappings.get('audio', [])
+            
+            self.logger.info(f"Found {len(video_streams)} video streams and {len(audio_streams)} audio streams")
+            
+            for i, stream in enumerate(video_streams):
+                self.logger.debug(f"Video stream {i+1}: {json.dumps(stream)}")
+            for i, stream in enumerate(audio_streams):
+                self.logger.debug(f"Audio stream {i+1}: {json.dumps(stream)}")
         
-    async def start(self) -> bool:
-        """Start the Media Gateway.
+        # TODO: Initialize other components (device manager, pipeline manager, etc.)
+        # For now, just log that we're ready
+        self.logger.info('Media Gateway components initialized.')
+        
+    def request_configuration(self):
+        """
+        Request configuration from the controller. (Same as ros-gateway)
         
         Returns:
-            True if startup was successful, False otherwise
+            Dict containing the configuration received from the controller
+        """
+        self.logger.info("Requesting configuration from controller...")
+        
+        # Try to get configuration directly from the controller using our ZmqClient
+        config = self.zmq_client.request_config()
+        
+        if config is not None:
+            self.logger.info("Successfully received configuration from controller")
+            self.logger.debug(f"DEBUG: Received config from controller: {json.dumps(config, indent=2)}")
+            
+            # Subscribe to configuration updates (same as ros-gateway)
+            self.zmq_client.subscribe_to_config_updates(self.handle_config_update)
+            
+            return config
+        
+        # Fallback to local configuration if controller request fails (same as ros-gateway)
+        self.logger.warning("Failed to get configuration from controller, using default configuration")
+        
+        # Use empty default configuration as fallback
+        return {
+            "version": "1.0",
+            "config_id": "default",
+            "lastUpdated": time.time(),
+            "robot_id": os.environ.get('TELEOP_ROBOT_ID', 'unknown'),
+            "media_mappings": {"video": [], "audio": []},
+            "defaults": {
+                "priority": "STANDARD",
+                "encoding_format": "video/h264"
+            }
+        }
+        
+    def handle_config_update(self, message):
+        """
+        Handle configuration updates from the controller. (Same as ros-gateway)
+        
+        Args:
+            message: The configuration update message (JSON string) from ZMQ SUB socket
         """
         try:
-            self.logger.info("Starting Media Gateway", controller_url=self.controller_url)
+            data = json.loads(message)
+            msg_type = data.get('type')
+            topic = data.get('topic')
             
-            # Initialize components
-            self.logger.info("Initializing components...")
-            
-            # 1. Initialize device manager first (discover hardware)
-            self.device_manager = DeviceManager()
-            await self.device_manager.discover_devices()
-            self.logger.info("Device discovery completed", 
-                           video_devices=len(self.device_manager.video_devices),
-                           audio_devices=len(self.device_manager.audio_devices))
-            
-            # 2. Initialize config manager and fetch configuration
-            self.config_manager = ConfigManager(self.controller_url)
-            config = await self.config_manager.request_config()
-            self.logger.info("Configuration loaded", streams=len(config.streams))
-            
-            # 3. Validate configuration against discovered devices
-            if not self.device_manager.validate_config(config):
-                self.logger.error("Configuration validation failed")
-                return False
+            if msg_type == 'CONFIG_UPDATED' or (topic and topic.startswith('configuration.notification')):
+                self.logger.info("Received notification that configuration has changed on controller.")
+                self.logger.info("Requesting full updated configuration...")
                 
-            # 4. Initialize connection manager
-            self.connection_manager = ConnectionManager(config.controller_endpoint)
-            await self.connection_manager.connect()
-            self.logger.info("Connected to Controller")
-            
-            # 5. Initialize frame router
-            self.frame_router = FrameRouter(self.connection_manager)
-            
-            # 6. Initialize pipeline manager
-            self.pipeline_manager = PipelineManager(self.frame_router)
-            
-            # 7. Create and start pipelines based on configuration
-            for stream_config in config.streams:
-                success = await self.pipeline_manager.create_stream(stream_config)
-                if not success:
-                    self.logger.error("Failed to create stream", 
-                                    device_id=stream_config.device_id)
-                    return False
+                # Proactively request the new configuration
+                new_config = self.zmq_client.request_config()
+                
+                if new_config is not None:
+                    self.logger.info("Successfully received updated configuration from controller.")
                     
-            # 8. Setup configuration update monitoring
-            self.config_manager.set_update_callback(self._on_config_update)
+                    # Apply the new configuration dynamically
+                    self.apply_new_configuration(new_config)
+                    
+                else:
+                    self.logger.error("Failed to retrieve updated configuration after notification.")
             
-            self.is_running = True
-            self.logger.info("Media Gateway started successfully")
-            return True
-            
+            elif msg_type == 'CONFIG_RESPONSE' or (topic and topic.startswith('configuration.update')):
+                self.logger.info("Received full configuration update directly via ZMQ publish.")
+                new_config = data.get('data')
+                if new_config:
+                    self.apply_new_configuration(new_config)
+                else:
+                    self.logger.warning("Received CONFIG_RESPONSE/update message but no 'data' field found.")
+                    
+            else:
+                self.logger.warning(f"Received unexpected message type '{msg_type}' on config subscription topic '{topic}'. Ignoring.")
+                
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Error decoding JSON from ZMQ config update message: {e}")
         except Exception as e:
-            self.logger.error("Failed to start Media Gateway", error=str(e))
-            return False
+            self.logger.error(f"Error processing configuration update: {e}")
             
-    async def stop(self):
-        """Stop the Media Gateway gracefully."""
-        if not self.is_running:
-            return
-            
-        self.logger.info("Stopping Media Gateway...")
-        self.is_running = False
+    def apply_new_configuration(self, new_config):
+        """Apply the received configuration to relevant components. (Same pattern as ros-gateway)"""
+        self.logger.info(f"Applying new configuration (ID: {new_config.get('config_id', 'N/A')}, Version: {new_config.get('version', 'N/A')})")
         
+        # Update the gateway's stored configuration
+        self.config = new_config
+        self.logger.info("Gateway configuration state updated.")
+        
+        # TODO: Update media components (device manager, pipeline manager, etc.)
+        
+    def run(self):
+        """Main run loop for the Media Gateway. (Same pattern as ros-gateway)"""
         try:
-            # Stop pipelines first
-            if self.pipeline_manager:
-                await self.pipeline_manager.stop_all_streams()
-                
-            # Disconnect from controller
-            if self.connection_manager:
-                await self.connection_manager.disconnect()
-                
-            self.logger.info("Media Gateway stopped")
+            self.logger.info("Media Gateway ready - entering main loop...")
             
-        except Exception as e:
-            self.logger.error("Error during shutdown", error=str(e))
-            
-    async def run(self):
-        """Main run loop for the Media Gateway."""
-        if not await self.start():
-            sys.exit(1)
-            
-        try:
-            # Keep running until stopped
-            while self.is_running:
-                await asyncio.sleep(1.0)
+            # Main processing loop
+            while True:
+                time.sleep(1)
+                # TODO: Add periodic health checks, stream monitoring, etc.
                 
-                # Periodic health checks
-                if self.pipeline_manager:
-                    await self.pipeline_manager.health_check()
-                    
         except KeyboardInterrupt:
-            self.logger.info("Keyboard interrupt received")
+            self.logger.info("Shutdown requested by user")
+        except Exception as e:
+            self.logger.error(f"Fatal error: {e}")
+            raise
         finally:
-            await self.stop()
+            self.shutdown()
             
-    async def _on_config_update(self, new_config):
-        """Handle configuration updates."""
-        self.logger.info("Configuration update received")
+    def shutdown(self):
+        """Shutdown the Media Gateway gracefully."""
+        self.logger.info("Shutting down Media Gateway...")
         
-        if self.pipeline_manager:
-            await self.pipeline_manager.update_streams(new_config)
-
-
-def setup_logging(debug: bool = False):
-    """Setup structured logging configuration."""
-    log_level = logging.DEBUG if debug else logging.INFO
-    
-    structlog.configure(
-        processors=[
-            structlog.stdlib.filter_by_level,
-            structlog.stdlib.add_logger_name,
-            structlog.stdlib.add_log_level,
-            structlog.stdlib.PositionalArgumentsFormatter(),
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
-            structlog.processors.UnicodeDecoder(),
-            structlog.processors.JSONRenderer()
-        ],
-        context_class=dict,
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        wrapper_class=structlog.stdlib.BoundLogger,
-        cache_logger_on_first_use=True,
-    )
-    
-    logging.basicConfig(
-        format="%(message)s",
-        stream=sys.stdout,
-        level=log_level,
-    )
-
-
-def parse_arguments():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Open Teleop Media Gateway",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s                                    # Use default controller URL
-  %(prog)s --controller-url http://localhost:8080
-  %(prog)s --debug                           # Enable debug logging
-        """
-    )
-    
-    parser.add_argument(
-        "--controller-url",
-        default="http://localhost:8080",
-        help="URL of the Open Teleop Controller (default: http://localhost:8080)"
-    )
-    
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug logging"
-    )
-    
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"Media Gateway {__import__('media_gateway').__version__}"
-    )
-    
-    return parser.parse_args()
-
-
-async def main_async():
-    """Async main function."""
-    args = parse_arguments()
-    setup_logging(args.debug)
-    
-    logger = structlog.get_logger(__name__)
-    logger.info("Starting Media Gateway", version=__import__('media_gateway').__version__)
-    
-    gateway = MediaGateway(args.controller_url, args.debug)
-    await gateway.run()
+        if hasattr(self, 'zmq_client') and self.zmq_client:
+            self.zmq_client.shutdown()
+            
+        self.logger.info("Media Gateway shutdown complete")
 
 
 def main():
-    """Main entry point."""
-    try:
-        asyncio.run(main_async())
-    except KeyboardInterrupt:
-        print("\nShutdown requested by user")
-        sys.exit(0)
-    except Exception as e:
-        print(f"Fatal error: {e}")
+    """Main entry point. (Same pattern as ros-gateway)"""
+    parser = argparse.ArgumentParser(description='Open Teleop Media Gateway')
+    parser.add_argument(
+        '--config-path', 
+        type=str, 
+        required=True,
+        help='Path to the gateway bootstrap configuration file (YAML)'
+    )
+    
+    # Parse only known arguments, allowing other arguments to pass through
+    parsed_args, _ = parser.parse_known_args()
+    
+    # Check if config file exists before trying to init gateway
+    if not os.path.exists(parsed_args.config_path):
+        print(f"Bootstrap configuration file not found: {parsed_args.config_path}")
         sys.exit(1)
+        
+    try:
+        gateway = MediaGateway(config_path=parsed_args.config_path)
+        gateway.run()
+        
+    except (KeyboardInterrupt, Exception) as e:
+        if isinstance(e, KeyboardInterrupt):
+            print("Shutdown signal received.")
+        else:
+            print(f"Fatal error during gateway execution: {e}")
+            
+    print("Media Gateway process finished.")
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main() 
