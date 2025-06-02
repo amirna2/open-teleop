@@ -47,6 +47,7 @@ class ZmqClient:
         self.context = zmq.Context()
         self.req_socket = None
         self.sub_socket = None
+        self.pub_socket = None  # Add publisher socket for sending discovery messages
         
         # Initialize sockets
         self._initialize_sockets()
@@ -55,21 +56,32 @@ class ZmqClient:
             logger.info(f"ZmqClient initialized: controller={controller_address}, pub={publish_address}")
     
     def _initialize_sockets(self):
-        """Initialize ZeroMQ sockets"""
+        """Initialize ZeroMQ sockets and connect to the controller."""
         with self._init_lock:
             if self._initialized:
                 return
                 
             try:
-                # REQ socket for request-reply pattern
+                # REQ socket for sending requests to controller
                 self.req_socket = self.context.socket(zmq.REQ)
                 self.req_socket.connect(self.controller_address)
                 
-                # SUB socket for subscription pattern
+                # SUB socket for receiving messages from controller
                 self.sub_socket = self.context.socket(zmq.SUB)
+                
+                # Set timeout for receive operations
+                self.sub_socket.setsockopt(zmq.RCVTIMEO, 1000)
                 
                 # Connect to the controller's publisher port
                 self.sub_socket.connect(self.publish_address)
+                
+                # PUB socket for publishing discovery messages
+                # Connect to controller's subscriber port (which is the same as publish_address)
+                self.pub_socket = self.context.socket(zmq.PUB)
+                self.pub_socket.connect(self.publish_address)
+                
+                # Set send timeout for publisher
+                self.pub_socket.setsockopt(zmq.SNDTIMEO, 1000)
                 
                 self._initialized = True
                 
@@ -113,6 +125,48 @@ class ZmqClient:
             if self.logger:
                 self.logger.error(f"ZmqClient: Error sending message: {e}")
             return None
+    
+    def publish_message(self, topic, message_type, data):
+        """
+        Publish a message to a topic on the Open Teleop protocol.
+        
+        Args:
+            topic: The topic to publish to (e.g., "teleop.media.available_sources")
+            message_type: The message type (e.g., "DEVICE_DISCOVERY")
+            data: The message data (dict)
+        
+        Returns:
+            True if published successfully, False otherwise
+        """
+        with self._init_lock:
+            if not self._initialized:
+                self._initialize_sockets()
+        
+        # Create message in Open Teleop format
+        message = {
+            "type": message_type,
+            "timestamp": time.time(),
+            "data": data
+        }
+        
+        message_json = json.dumps(message)
+        
+        if self.logger:
+            self.logger.debug(f"ZmqClient: Publishing to topic '{topic}': {message_json[:100]}...")
+        
+        try:
+            # Send topic first, then message (ZeroMQ PUB pattern)
+            self.pub_socket.send_string(topic, zmq.SNDMORE)
+            self.pub_socket.send_string(message_json)
+            
+            if self.logger:
+                self.logger.debug(f"ZmqClient: Successfully published message to topic '{topic}'")
+                
+            return True
+        except zmq.ZMQError as e:
+            if self.logger:
+                self.logger.error(f"ZmqClient: Error publishing message to topic '{topic}': {e}")
+            return False
     
     def send_request_binary(self, binary_data):
         """
@@ -279,6 +333,10 @@ class ZmqClient:
             if self.sub_socket:
                 self.sub_socket.close()
                 self.sub_socket = None
+            
+            if self.pub_socket:
+                self.pub_socket.close()
+                self.pub_socket = None
             
             if self.context:
                 self.context.term()

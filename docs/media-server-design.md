@@ -167,7 +167,7 @@ media_mappings:
       encoder_params:
         width: 1920
         height: 1080
-        framerate: 30
+      framerate: 30
         bitrate: 4000
         gop_size: 15
       priority: "HIGH"
@@ -179,8 +179,8 @@ media_mappings:
       encoder_params:
         width: 640
         height: 480
-        framerate: 30
-        quality: 80
+      framerate: 30
+      quality: 80
       priority: "STANDARD"
 
   audio:

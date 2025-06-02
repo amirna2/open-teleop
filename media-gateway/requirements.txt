@@ -2,11 +2,11 @@
 # Note: PyGObject is installed via system packages (apt install python3-gi)
 pyzmq>=25.0.0              # ZeroMQ Python bindings
 PyYAML>=6.0                # YAML configuration parsing
-flatbuffers>=23.0.0         # Flatbuffer serialization (same as A/V Node)
+flatbuffers>=23.5.26        # Flatbuffer serialization (same as A/V Node)
 
 # Device discovery and management
-pyudev>=0.23.0             # Linux device discovery
-v4l2py>=0.2.0              # V4L2 device capabilities querying
+pyudev>=0.24.0             # Linux device discovery
+v4l2py>=0.8.0              # V4L2 device capabilities querying
 
 # Audio support (optional - fallback if system packages aren't available)
 # pyalsaaudio>=0.10.0        # ALSA audio device management
@@ -17,7 +17,7 @@ pytest-asyncio>=0.21.0     # Async testing support
 pytest-mock>=3.10.0        # Mocking for tests
 
 # Logging and monitoring
-structlog>=22.3.0          # Structured logging
+structlog>=23.1.0          # Structured logging
 psutil>=5.9.0              # System monitoring (CPU, memory usage)
 
 # Optional: Performance profiling

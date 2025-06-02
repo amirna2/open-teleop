@@ -186,6 +186,12 @@ clean_build() {
     find . -name "*.pyc" -delete 2>/dev/null || true
     echo -e "${GREEN}✓ Removed Python cache files${NC}"
     
+    # Clean Media Gateway build artifacts
+    if [ -d "media-gateway" ]; then
+        print_status "Cleaning Media Gateway..."
+        ./scripts/build_media_gateway.sh clean
+    fi
+    
     echo -e "${GREEN}✓ Cleanup complete${NC}"
 }
 

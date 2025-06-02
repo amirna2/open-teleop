@@ -83,32 +83,8 @@ media_mappings:
         gop_size: 15
         profile: "baseline"
         preset: "ultrafast"
+      direction: "OUTBOUND"
       priority: "HIGH"
-    
-    - device_id: "video1"
-      ott: "teleop.video.rear_camera"
-      topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0008"
-      encoding_format: "video/h264"
-      encoder_params:
-        width: 1280
-        height: 720
-        framerate: 15
-        bitrate: 2000
-        gop_size: 15
-        profile: "baseline"
-        preset: "fast"
-      priority: "STANDARD"
-    
-    - device_id: "video2"
-      ott: "teleop.video.overview_camera"
-      topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0009"
-      encoding_format: "video/mjpeg"
-      encoder_params:
-        width: 640
-        height: 480
-        framerate: 10
-        quality: 80
-      priority: "LOW"
 
   audio:
     - device_id: "audio0"
@@ -130,6 +106,16 @@ media_mappings:
         sample_rate: 48000
         channels: 1
       priority: "LOW"
+
+# Media Gateway configuration
+media_gateway:
+  device_discovery:
+    enabled: true
+    topic: "teleop.media.available_sources"
+    topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0012"
+    direction: "OUTBOUND"
+    priority: "LOW"
+    check_interval_seconds: 10
 
 # Throttling settings per priority level (0 = no throttling)
 throttle_rates:

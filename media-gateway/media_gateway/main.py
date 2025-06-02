@@ -11,10 +11,12 @@ import argparse
 import yaml
 import json
 import time
+import asyncio
 import logging
 from pathlib import Path
 
-from media_gateway.zeromq_client.zmq_client import ZmqClient
+from .zeromq_client.zmq_client import ZmqClient
+from .devices.manager import DeviceManager
 
 
 def load_config_from_yaml(config_path, logger):
@@ -90,6 +92,13 @@ class MediaGateway:
         self.logger.info('Starting Media Gateway for Open-Teleop')
         self.logger.info(f'Using bootstrap config file: {config_path}')
         
+        # Initialize device manager for hardware discovery
+        self.device_manager = DeviceManager()
+        
+        # Device discovery state
+        self._last_device_state = None
+        self._discovery_task = None
+        
         # Get ZeroMQ configuration (ENV > YAML > Default) - same as ros-gateway
         zmq_config = self.bootstrap_config.get('media_gateway', {}).get('zmq', {})
         controller_address = os.environ.get('TELEOP_ZMQ_CONTROLLER_ADDRESS') or zmq_config.get('controller_address', 'tcp://localhost:5555')
@@ -132,9 +141,146 @@ class MediaGateway:
             for i, stream in enumerate(audio_streams):
                 self.logger.debug(f"Audio stream {i+1}: {json.dumps(stream)}")
         
-        # TODO: Initialize other components (device manager, pipeline manager, etc.)
+        # TODO: Initialize other components (pipeline manager, transport layer, etc.)
         # For now, just log that we're ready
         self.logger.info('Media Gateway components initialized.')
+        
+    async def initialize_devices(self):
+        """Initialize and discover hardware devices."""
+        self.logger.info("Initializing device discovery...")
+        await self.device_manager.discover_devices()
+        
+        # Log discovered devices
+        sources = self.device_manager.get_available_sources()
+        video_sources = sources.get('video_sources', [])
+        audio_sources = sources.get('audio_sources', [])
+        
+        self.logger.info(f"Device discovery completed: {len(video_sources)} video devices, {len(audio_sources)} audio devices")
+        
+        for device in video_sources:
+            self.logger.info(f"Video: {device['name']} ({device['device_id']}) - {len(device['resolutions'])} resolutions")
+            
+        for device in audio_sources:
+            self.logger.info(f"Audio: {device['name']} ({device['device_id']})")
+            
+        # Print summary for easy visibility
+        print("\n" + "="*60)
+        print("DISCOVERED DEVICES")
+        print("="*60)
+        print(json.dumps(sources, indent=2))
+        print("="*60)
+        
+        # Start device discovery monitoring after initial discovery
+        self._start_device_discovery_monitoring()
+        
+        return sources
+
+    def _start_device_discovery_monitoring(self):
+        """Start monitoring for device changes and publish updates."""
+        discovery_config = self.config.get('media_gateway', {}).get('device_discovery', {})
+        
+        if not discovery_config.get('enabled', True):
+            self.logger.info("Device discovery publishing is disabled")
+            return
+            
+        interval_seconds = discovery_config.get('interval_seconds', 10)
+        self.logger.info(f"Starting device discovery monitoring every {interval_seconds} seconds")
+        
+        # Start the monitoring task
+        self._discovery_task = asyncio.create_task(self._discovery_monitor_loop(interval_seconds))
+        
+    async def _discovery_monitor_loop(self, interval_seconds):
+        """Monitor devices for changes and publish updates."""
+        while True:
+            try:
+                await asyncio.sleep(interval_seconds)
+                await self._check_and_publish_device_changes()
+            except asyncio.CancelledError:
+                self.logger.info("Device discovery monitoring cancelled")
+                break
+            except Exception as e:
+                self.logger.error(f"Error in device discovery monitoring: {e}")
+                
+    async def _check_and_publish_device_changes(self):
+        """Check for device changes and publish if changed."""
+        try:
+            # Re-discover devices
+            await self.device_manager.discover_devices()
+            current_sources = self.device_manager.get_available_sources()
+            
+            # Create device state hash for change detection
+            current_state = self._create_device_state_hash(current_sources)
+            
+            # Check if devices changed
+            if self._last_device_state != current_state:
+                self.logger.info("Device changes detected, publishing update")
+                await self._publish_device_discovery(current_sources)
+                self._last_device_state = current_state
+            else:
+                self.logger.debug("No device changes detected")
+                
+        except Exception as e:
+            self.logger.error(f"Error checking device changes: {e}")
+            
+    def _create_device_state_hash(self, sources):
+        """Create a hash representing the current device state."""
+        import hashlib
+        
+        # Create a sorted, deterministic representation
+        video_devices = sorted([
+            (d['device_id'], d['name'], len(d['resolutions']))
+            for d in sources.get('video_sources', [])
+        ])
+        
+        audio_devices = sorted([
+            (d['device_id'], d['name'])
+            for d in sources.get('audio_sources', [])
+        ])
+        
+        state_str = json.dumps({'video': video_devices, 'audio': audio_devices}, sort_keys=True)
+        return hashlib.sha256(state_str.encode()).hexdigest()
+        
+    async def _publish_device_discovery(self, sources):
+        """Publish device discovery message to ZeroMQ topic."""
+        discovery_config = self.config.get('media_gateway', {}).get('device_discovery', {})
+        
+        # Build discovery message
+        message = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "video_sources": sources.get('video_sources', []),
+            "audio_sources": sources.get('audio_sources', [])
+        }
+        
+        # Get topic configuration
+        topic = discovery_config.get('topic', 'teleop.media.available_sources')
+        topic_id = discovery_config.get('topic_id', 'f0000001-aaaa-bbbb-cccc-d701748f0010')
+        direction = discovery_config.get('direction', 'OUTBOUND')
+        priority = discovery_config.get('priority', 'LOW')
+        
+        self.logger.info(f"Publishing device discovery to topic: {topic}")
+        self.logger.debug(f"Discovery message: {json.dumps(message, indent=2)}")
+        
+        # Create OTT message
+        ott_message = {
+            'version': 1,
+            'ott': topic,
+            'topic_id': topic_id,
+            'direction': direction,
+            'priority': priority,
+            'timestamp_ns': int(time.time() * 1_000_000_000),
+            'content_type': 'application/json',
+            'payload': json.dumps(message).encode('utf-8')
+        }
+        
+        # Publish via ZMQ
+        if hasattr(self, 'zmq_client') and self.zmq_client:
+            success = self.zmq_client.publish_message(topic, "DEVICE_DISCOVERY", message)
+            if success:
+                self.logger.info("Successfully published device discovery message")
+            else:
+                self.logger.warning("Failed to publish device discovery message")
+        else:
+            self.logger.warning("ZMQ client not available, cannot publish discovery message")
         
     def request_configuration(self):
         """
@@ -228,63 +374,75 @@ class MediaGateway:
         # TODO: Update media components (device manager, pipeline manager, etc.)
         
     def run(self):
-        """Main run loop for the Media Gateway. (Same pattern as ros-gateway)"""
+        """
+        Start the Media Gateway and keep it running. (Same as ros-gateway)
+        """
+        self.logger.info("Starting Media Gateway main loop...")
+        
         try:
-            self.logger.info("Media Gateway ready - entering main loop...")
-            
-            # Main processing loop
+            # Main loop (simplified for now)
             while True:
-                time.sleep(1)
-                # TODO: Add periodic health checks, stream monitoring, etc.
+                # TODO: Implement media streaming loop
+                # For now, just sleep to keep the process alive
+                time.sleep(1.0)
                 
         except KeyboardInterrupt:
-            self.logger.info("Shutdown requested by user")
+            self.logger.info("Received interrupt signal, shutting down...")
+            self.shutdown()
         except Exception as e:
-            self.logger.error(f"Fatal error: {e}")
-            raise
-        finally:
+            self.logger.error(f"Unexpected error in main loop: {e}")
             self.shutdown()
             
     def shutdown(self):
-        """Shutdown the Media Gateway gracefully."""
+        """Shutdown the Media Gateway gracefully. (Same as ros-gateway)"""
         self.logger.info("Shutting down Media Gateway...")
         
-        if hasattr(self, 'zmq_client') and self.zmq_client:
+        # Stop device discovery monitoring
+        if self._discovery_task and not self._discovery_task.done():
+            self._discovery_task.cancel()
+            self.logger.info("Cancelled device discovery monitoring task")
+        
+        if hasattr(self, 'zmq_client'):
             self.zmq_client.shutdown()
             
-        self.logger.info("Media Gateway shutdown complete")
+        self.logger.info("Media Gateway shutdown complete.")
 
 
 def main():
-    """Main entry point. (Same pattern as ros-gateway)"""
-    parser = argparse.ArgumentParser(description='Open Teleop Media Gateway')
-    parser.add_argument(
-        '--config-path', 
-        type=str, 
-        required=True,
-        help='Path to the gateway bootstrap configuration file (YAML)'
-    )
+    """
+    Main entry point for the Media Gateway. (Same as ros-gateway)
+    """
+    parser = argparse.ArgumentParser(description='Media Gateway for Open-Teleop')
+    parser.add_argument('--config-path', type=str, 
+                       default='/home/amir/projects/open-teleop/media-gateway/config/media-gateway-config.yaml',
+                       help='Path to the configuration file')
     
-    # Parse only known arguments, allowing other arguments to pass through
-    parsed_args, _ = parser.parse_known_args()
+    args = parser.parse_args()
     
-    # Check if config file exists before trying to init gateway
-    if not os.path.exists(parsed_args.config_path):
-        print(f"Bootstrap configuration file not found: {parsed_args.config_path}")
-        sys.exit(1)
-        
+    gateway = None
     try:
-        gateway = MediaGateway(config_path=parsed_args.config_path)
+        # Initialize and run the gateway
+        gateway = MediaGateway(args.config_path)
+        
+        # Initialize devices as part of normal startup
+        asyncio.run(gateway.initialize_devices())
+        
+        # Run main loop
         gateway.run()
         
-    except (KeyboardInterrupt, Exception) as e:
-        if isinstance(e, KeyboardInterrupt):
-            print("Shutdown signal received.")
-        else:
-            print(f"Fatal error during gateway execution: {e}")
-            
-    print("Media Gateway process finished.")
+    except KeyboardInterrupt:
+        print("\nReceived interrupt signal, shutting down...")
+        if gateway:
+            gateway.shutdown()
+        return 0
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        if gateway:
+            gateway.shutdown()
+        return 1
+        
+    return 0
 
 
 if __name__ == '__main__':
-    main() 
+    sys.exit(main()) 
