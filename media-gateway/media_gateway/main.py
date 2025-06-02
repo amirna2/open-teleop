@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .zeromq_client.zmq_client import ZmqClient
 from .devices.manager import DeviceManager
+from .pipelines.manager import PipelineManager
 
 
 def load_config_from_yaml(config_path, logger):
@@ -69,7 +70,6 @@ def setup_logging(bootstrap_config):
             handlers=[logging.StreamHandler(sys.stdout)]
         )
 
-
 class MediaGateway:
     """
     Media Gateway for Open-Teleop.
@@ -94,6 +94,9 @@ class MediaGateway:
         
         # Initialize device manager for hardware discovery
         self.device_manager = DeviceManager()
+        
+        # Initialize pipeline manager for GStreamer pipelines
+        self.pipeline_manager = None
         
         # Device discovery state
         self._last_device_state = None
@@ -141,8 +144,13 @@ class MediaGateway:
             for i, stream in enumerate(audio_streams):
                 self.logger.debug(f"Audio stream {i+1}: {json.dumps(stream)}")
         
-        # TODO: Initialize other components (pipeline manager, transport layer, etc.)
-        # For now, just log that we're ready
+        # Initialize pipeline manager
+        self.pipeline_manager = PipelineManager(
+            device_manager=self.device_manager,
+            zmq_client=self.zmq_client,
+            logger=self.logger
+        )
+        
         self.logger.info('Media Gateway components initialized.')
         
     async def initialize_devices(self):
@@ -174,6 +182,26 @@ class MediaGateway:
         self._start_device_discovery_monitoring()
         
         return sources
+    
+    async def start_pipeline_manager(self):
+        """Start the pipeline manager and create initial streams."""
+        if not self.pipeline_manager:
+            self.logger.error("Pipeline manager not initialized")
+            return
+            
+        self.logger.info("Starting pipeline manager...")
+        
+        # Start the pipeline manager
+        await self.pipeline_manager.start_manager()
+        
+        # Create streams from configuration media mappings
+        media_mappings = self.config.get('media_mappings', {})
+        if media_mappings:
+            await self.pipeline_manager.create_streams_from_config(media_mappings)
+        else:
+            self.logger.info("No media mappings found in configuration")
+            
+        self.logger.info("Pipeline manager started successfully")
 
     def _start_device_discovery_monitoring(self):
         """Start monitoring for device changes and publish updates."""
@@ -371,27 +399,11 @@ class MediaGateway:
         self.config = new_config
         self.logger.info("Gateway configuration state updated.")
         
-        # TODO: Update media components (device manager, pipeline manager, etc.)
+        # Update pipeline manager with new media mappings
+        if self.pipeline_manager:
+            asyncio.create_task(self.pipeline_manager.update_streams(new_config))
         
-    def run(self):
-        """
-        Start the Media Gateway and keep it running. (Same as ros-gateway)
-        """
-        self.logger.info("Starting Media Gateway main loop...")
-        
-        try:
-            # Main loop (simplified for now)
-            while True:
-                # TODO: Implement media streaming loop
-                # For now, just sleep to keep the process alive
-                time.sleep(1.0)
-                
-        except KeyboardInterrupt:
-            self.logger.info("Received interrupt signal, shutting down...")
-            self.shutdown()
-        except Exception as e:
-            self.logger.error(f"Unexpected error in main loop: {e}")
-            self.shutdown()
+
             
     def shutdown(self):
         """Shutdown the Media Gateway gracefully. (Same as ros-gateway)"""
@@ -408,10 +420,8 @@ class MediaGateway:
         self.logger.info("Media Gateway shutdown complete.")
 
 
-def main():
-    """
-    Main entry point for the Media Gateway. (Same as ros-gateway)
-    """
+async def async_main():
+    """Async main function for the Media Gateway."""
     parser = argparse.ArgumentParser(description='Media Gateway for Open-Teleop')
     parser.add_argument('--config-path', type=str, 
                        default='/home/amir/projects/open-teleop/media-gateway/config/media-gateway-config.yaml',
@@ -421,27 +431,42 @@ def main():
     
     gateway = None
     try:
-        # Initialize and run the gateway
+        # Initialize gateway
         gateway = MediaGateway(args.config_path)
         
-        # Initialize devices as part of normal startup
-        asyncio.run(gateway.initialize_devices())
+        # Initialize devices
+        await gateway.initialize_devices()
         
-        # Run main loop
-        gateway.run()
+        # Start pipeline manager and create streams
+        await gateway.start_pipeline_manager()
+        
+        # Keep running (async version of main loop)
+        gateway.logger.info("Media Gateway is running. Press Ctrl+C to stop.")
+        while True:
+            await asyncio.sleep(1.0)
         
     except KeyboardInterrupt:
         print("\nReceived interrupt signal, shutting down...")
         if gateway:
+            if gateway.pipeline_manager:
+                await gateway.pipeline_manager.stop_manager()
             gateway.shutdown()
         return 0
     except Exception as e:
         print(f"Fatal error: {e}")
         if gateway:
+            if gateway.pipeline_manager:
+                await gateway.pipeline_manager.stop_manager()
             gateway.shutdown()
         return 1
         
     return 0
+
+def main():
+    """
+    Main entry point for the Media Gateway.
+    """
+    return asyncio.run(async_main())
 
 
 if __name__ == '__main__':

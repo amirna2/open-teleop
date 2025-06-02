@@ -12,13 +12,16 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Optional
 
+# Import v4l2py types first
+from v4l2py.device import Device
+HAS_V4L2_SUPPORT = False
+
 try:
     import pyudev
     import v4l2py
-    from v4l2py.device import Device
     HAS_V4L2_SUPPORT = True
 except ImportError:
-    HAS_V4L2_SUPPORT = False
+    pass
 
 from .models import VideoDevice, AudioDevice, Resolution
 
