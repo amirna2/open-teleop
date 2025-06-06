@@ -1,90 +1,76 @@
 #!/bin/bash
 
+# Build script for the Open Teleop Media Gateway using uv
+
 set -e
 
-# The root of the repository
-PROJECT_ROOT=$(git rev-parse --show-toplevel)
-MEDIA_GATEWAY_DIR="$PROJECT_ROOT/media-gateway"
+# --- Configuration ---
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+NC='\033[0m'
 
-# Function to handle cleanup
-clean_media_gateway() {
-    echo "Cleaning Media Gateway build artifacts..."
-    cd "$MEDIA_GATEWAY_DIR"
-    
-    rm -rf .venv
-    find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-    rm -rf build/ dist/ *.egg-info/ .pytest_cache/ 2>/dev/null || true
-    rm -rf logs/ 2>/dev/null || true
-    rm -rf media_gateway/flatbuffers 2>/dev/null || true
-    
-    echo "Media Gateway cleanup complete."
-    cd "$PROJECT_ROOT"
+# --- Helper Functions ---
+print_status() {
+    echo -e "${YELLOW}$1${NC}"
 }
 
-# Handle 'clean' argument
-if [ "$1" = "clean" ]; then
-    clean_media_gateway
-    exit 0
+print_success() {
+    echo -e "${GREEN}$1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}$1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}$1${NC}"
+}
+
+# --- Script Body ---
+# Find project root (assuming script is in project_root/scripts)
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." &> /dev/null && pwd )"
+MEDIA_GATEWAY_DIR="$PROJECT_ROOT/media-gateway"
+VENV_DIR="$MEDIA_GATEWAY_DIR/.venv"
+
+# 1. Prerequisite Check: Verify uv is installed
+print_status "Step 1: Checking for uv..."
+if ! command -v uv &> /dev/null; then
+    print_error "Error: 'uv' command not found."
+    print_error "Please install uv first. See: https://github.com/astral-sh/uv"
+    exit 1
 fi
+print_success "uv is installed."
 
-echo "Building Media Gateway..."
-
-# System package dependencies
-PACKAGES=(
-    "python3-gi"
-    "python3-gi-cairo"
-    "gir1.2-gstreamer-1.0"
-    "gir1.2-gst-plugins-base-1.0"
-    "gstreamer1.0-plugins-good"
-    "gstreamer1.0-plugins-bad"
-    "gstreamer1.0-plugins-ugly"
-    "gstreamer1.0-libav"
-    "libzmq3-dev"
-    "python3-dev"
-    "python3-pip"
-    "python3-venv"
-    "v4l-utils"
-    "alsa-utils"
-    "libudev-dev"
-    "flatbuffers-compiler"
-)
-
-# Check and install system packages
-# This is a simplified check. A more robust solution might be desired for a real project.
-if ! dpkg -l "${PACKAGES[@]}" >/dev/null 2>&1; then
-    echo "Installing missing system packages..."
-    sudo apt-get update
-    sudo apt-get install -y "${PACKAGES[@]}"
-else
-    echo "All system packages are already installed."
-fi
-
-# Navigate to the component directory
+# 2. Create Virtual Environment
+print_status "Step 2: Creating virtual environment with uv..."
 cd "$MEDIA_GATEWAY_DIR"
+uv venv -p python3.12 "$VENV_DIR" --seed --system-site-packages
+print_success "Virtual environment created at $VENV_DIR"
 
-# Create python virtual environment if it doesn't exist
-if [ ! -d ".venv" ]; then
-    echo "Creating Python virtual environment..."
-    python3 -m venv .venv --system-site-packages
+# 3. Install Package in Editable Mode
+print_status "Step 3: Installing media-gateway package in editable mode..."
+# Activate the virtual environment for this script's context
+source "$VENV_DIR/bin/activate"
+
+# Make the build resilient by finding and setting the pkg-config path
+print_status "--> Searching for system libraries to ensure a resilient build..."
+GI_PC_FILE=$(find /usr -name "girepository-2.0.pc" 2>/dev/null | head -n 1)
+
+if [ -n "$GI_PC_FILE" ]; then
+    GI_PC_DIR=$(dirname "$GI_PC_FILE")
+    print_status "--> Found GObject Introspection at $GI_PC_DIR. Temporarily setting PKG_CONFIG_PATH."
+    export PKG_CONFIG_PATH=$GI_PC_DIR${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
+else
+    print_warning "--> WARNING: Could not automatically find 'girepository-2.0.pc'."
+    print_warning "--> The build may fail if pkg-config cannot find it in the default paths."
+    print_warning "--> This can happen in non-standard environments. Ensure 'libgirepository1.0-dev' is installed."
 fi
 
-# Activate virtual environment
-source .venv/bin/activate
+uv pip install -e .
 
-# Generate flatbuffers code
-echo "Generating flatbuffers code..."
-FLATBUFFERS_DIR="media_gateway/flatbuffers"
-mkdir -p "$FLATBUFFERS_DIR"
-flatc --python -o "$FLATBUFFERS_DIR" "$PROJECT_ROOT/schemas/ott_message.fbs"
-
-# Create __init__.py files to ensure the generated code is a package
-touch "$FLATBUFFERS_DIR/__init__.py"
-find "$FLATBUFFERS_DIR" -type d -exec touch {}/__init__.py \;
-
-# Install/update Python dependencies
-echo "Installing Python packages..."
-pip install --upgrade pip
-pip install -r requirements.txt
-pip install -e .
-
-echo "Media Gateway build complete!" 
+print_success "\nBuild complete!"
+print_success "The 'open-teleop-media-gateway' command is now available in the virtual environment."
+print_status "\nTo run the gateway, use the dedicated run script:"
+print_status "  ./scripts/run_media_gateway.sh" 

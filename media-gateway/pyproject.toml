@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-teleop-media-gateway"
+version = "0.1.0"
+authors = [
+    { name="Amir Hamdi", email="amir.hamdi@example.com" },
+]
+description = "Open-Teleop Media Gateway for hardware A/V streaming"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "pyyaml",
+    "pyzmq",
+    "flatbuffers",
+    "pyudev; sys_platform == 'linux'",
+    "v4l2py; sys_platform == 'linux'",
+    "numpy",
+]
+
+[project.scripts]
+open-teleop-media-gateway = "media_gateway.main:main" 

@@ -111,6 +111,34 @@ class GstMediaPipeline:
         
         self._create_pipeline()
         
+        # Get and watch the GStreamer bus for messages
+        if self.pipeline:
+            self.bus = self.pipeline.get_bus()
+            self.bus.add_signal_watch()
+            self.bus.connect("message", self._on_bus_message)
+
+    def _on_bus_message(self, bus, message):
+        """Handle messages from the GStreamer bus."""
+        t = message.type
+        if t == Gst.MessageType.ERROR:
+            err, dbg = message.parse_error()
+            self.logger.error(f"Bus Error for {self.stream_id}: {err} ({dbg})")
+            self.status = 'ERROR'
+        elif t == Gst.MessageType.EOS:
+            self.logger.info(f"Bus EOS for {self.stream_id}")
+            self.status = 'EOS'
+        elif t == Gst.MessageType.STATE_CHANGED:
+            old_state, new_state, pending_state = message.parse_state_changed()
+            # We are only interested in messages from the pipeline itself
+            if message.src == self.pipeline:
+                self.logger.info(
+                    f"Pipeline {self.stream_id} state changed from {old_state.value_nick} to {new_state.value_nick}"
+                )
+                if new_state == Gst.State.PLAYING:
+                    self.status = 'RUNNING'
+                elif new_state == Gst.State.NULL:
+                    self.status = 'STOPPED'
+
     def _create_pipeline(self):
         """Creates the GStreamer pipeline with all elements."""
         try:
@@ -311,10 +339,14 @@ class GstMediaPipeline:
             ret = self.pipeline.set_state(Gst.State.PLAYING)
             if ret == Gst.StateChangeReturn.FAILURE:
                 self.status = 'ERROR'
+                self.logger.error(f"Failed to set pipeline state to PLAYING for {self.stream_id}")
                 raise RuntimeError(f"Failed to start pipeline for {self.stream_id}")
-            else:
+            elif ret == Gst.StateChangeReturn.ASYNC:
+                self.logger.info(f"Pipeline {self.stream_id} is transitioning to PLAYING asynchronously")
+                self.status = 'STARTING'
+            elif ret == Gst.StateChangeReturn.SUCCESS:
+                self.logger.info(f"Pipeline {self.stream_id} state set to PLAYING successfully (synchronous)")
                 self.status = 'RUNNING'
-                self.logger.info(f"Pipeline started for {self.stream_id}")
     
     def stop(self):
         """Stop the pipeline."""

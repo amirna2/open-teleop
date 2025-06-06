@@ -1,6 +1,66 @@
-# Media Gateway
+# Open-Teleop Media Gateway
 
-The Media Gateway is a high-performance component for capturing audio/video from hardware devices and streaming them to the Open Teleop platform. It provides direct hardware access for production-quality teleoperation video streaming.
+The Media Gateway is a dedicated component for high-performance audio/video capture and streaming in the Open-Teleop system. It accesses hardware devices like cameras and microphones directly, encodes their output into standard formats (H.264, Opus), and streams the data to the central controller.
+
+This component is designed to run on the robot and provides the low-latency, high-quality media streams required for production teleoperation.
+
+## Setup and Installation
+
+### 1. System Prerequisites
+
+Before building, you must install the required system-level development libraries. These are necessary to build the Python packages that interface with GStreamer and system hardware.
+
+On Debian-based systems (like Ubuntu), you can install them with the following command:
+
+```bash
+sudo apt update && sudo apt install -y \
+    build-essential \
+    python3-dev \
+    libgirepository1.0-dev \
+    gir1.2-gtk-3.0 \
+    python3-gi \
+    python3-gi-cairo \
+    libcairo2-dev \
+    pkg-config \
+    libglib2.0-dev \
+    libudev-dev \
+    libzmq3-dev \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-tools \
+    v4l-utils \
+    alsa-utils
+```
+
+### 2. Build the Gateway
+
+Once the system prerequisites are installed, you can build the gateway using the provided script. This will set up a Python virtual environment using `uv` and install all necessary Python packages.
+
+```bash
+./scripts/build_media_gateway.sh
+```
+
+The build script will:
+1. Check for `uv` package manager
+2. Create a Python virtual environment with system site packages enabled
+3. Install the media gateway package in editable mode
+
+### 3. Run the Gateway
+
+After a successful build, you can run the media gateway with this command:
+
+```bash
+./scripts/run_media_gateway.sh
+```
+
+The script will automatically use a default configuration file. To provide a custom configuration, pass it as an argument:
+
+```bash
+./scripts/run_media_gateway.sh --config-path /path/to/your/config.yaml
+```
 
 ## Overview
 
