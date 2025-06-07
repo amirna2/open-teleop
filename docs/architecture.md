@@ -2,11 +2,13 @@
 
 ## 1. Overview
 
-The Open-Teleop Platform is a distributed system designed to enable remote operation of robots by providing a standardized way to stream sensor data, video, and command information between robots and operators. The architecture consists of three main layers:
+The Open-Teleop Platform is a distributed system designed to enable remote operation of robots by providing a standardized way to stream sensor data, video, and command information between robots and operators. The architecture consists of several main components:
 
-1. **Robot Layer** - The native ROS2 ecosystem running on the robot
-2. **Bridge Layer** - A universal bridge that connects to ROS topics and forwards data
-3. **Controller Layer** - A Go-based controller for processing messages and providing client APIs
+1. **ROS Gateway** - Python ROS2 node that bridges ROS topics to/from the controller via ZeroMQ using FlatBuffers serialization
+2. **Go Controller** - Main backend that processes messages, serves web UI, and handles client connections via WebSocket/WebRTC/REST
+3. **Media Gateway** - Python service for hardware A/V capture and encoding using GStreamer
+4. **A/V Node** - ROS2 node that handles encoded video frame processing and streaming
+5. **Web UI** - Frontend interface for teleoperation control and video streaming
 
 ![Architecture Diagram](open-teleop-arch.png)
 
@@ -20,9 +22,9 @@ The Open-Teleop Platform is a distributed system designed to enable remote opera
 
 ## 2. Component Architecture
 
-### 2.1 Universal Bridge
+### 2.1 ROS Gateway
 
-The Universal Bridge is a single component that connects to the robot's ROS ecosystem and forwards messages to the controller.
+The ROS Gateway is a Python ROS2 node that bridges the robot's ROS ecosystem with the controller using ZeroMQ communication and FlatBuffers serialization.
 
 #### 2.1.1 Topic Subscriber
 - **Role**: Subscribes to configured ROS topics
@@ -43,7 +45,7 @@ The Universal Bridge is a single component that connects to the robot's ROS ecos
 - **Role**: Sends messages to the controller
 - **Responsibilities**:
   - Maintain connection to controller
-  - Serialize and send OttMessages
+  - Serialize and send OttMessages using FlatBuffers
   - Handle connection failures and recovery
 
 #### 2.1.4 Topic Publisher
@@ -54,23 +56,119 @@ The Universal Bridge is a single component that connects to the robot's ROS ecos
   - Publish to configured ROS topics
 
 #### 2.1.5 Config Processor
-- **Role**: Manages bridge configuration
+- **Role**: Manages gateway configuration
 - **Responsibilities**:
-  - Load and parse configuration
+  - Load and parse configuration from YAML files
   - Apply topic mappings (ROS topic → OTT)
   - Handle dynamic configuration updates
 
-### 2.2 Controller Layer
+### 2.2 Media Gateway
 
-The Controller layer processes messages from the bridge and provides interfaces for clients.
+The Media Gateway is a Python service responsible for hardware audio/video capture and encoding using GStreamer pipelines.
 
-#### 2.2.1 Message Processing
+#### 2.2.1 Device Manager
+- **Role**: Discovers and manages A/V hardware devices
+- **Responsibilities**:
+  - Enumerate available cameras and audio devices
+  - Query device capabilities (resolutions, formats, frame rates)
+  - Handle device hotplug events
+  - Manage device access and locking
+
+#### 2.2.2 Pipeline Manager
+- **Role**: Creates and manages GStreamer pipelines
+- **Responsibilities**:
+  - Build encoding pipelines based on device capabilities
+  - Configure encoders (H.264, H.265, etc.)
+  - Handle pipeline state changes and errors
+  - Monitor pipeline performance
+
+#### 2.2.3 Frame Router
+- **Role**: Routes encoded frames to appropriate destinations
+- **Responsibilities**:
+  - Receive encoded frames from GStreamer pipelines
+  - Package frames for transport
+  - Route to A/V Node or other consumers
+  - Handle frame buffering and flow control
+
+#### 2.2.4 Config Manager
+- **Role**: Manages media gateway configuration
+- **Responsibilities**:
+  - Load configuration from YAML files
+  - Handle dynamic configuration updates
+  - Validate device and pipeline settings
+
+### 2.3 A/V Node
+
+The A/V Node is a ROS2 node that handles encoded video frame processing and integration with the ROS ecosystem.
+
+#### 2.3.1 Encoded Frame Subscriber
+- **Role**: Receives encoded frames from Media Gateway
+- **Responsibilities**:
+  - Subscribe to encoded frame streams
+  - Handle frame timing and synchronization
+  - Process frame metadata
+
+#### 2.3.2 Stream Publisher
+- **Role**: Publishes encoded frames as ROS messages
+- **Responsibilities**:
+  - Convert encoded frames to ROS2 messages
+  - Publish to configured ROS topics
+  - Handle stream lifecycle events
+
+#### 2.3.3 Stream Manager
+- **Role**: Manages multiple video streams
+- **Responsibilities**:
+  - Coordinate multiple camera streams
+  - Handle stream priorities and resources
+  - Provide stream status and control
+
+### 2.4 Go Controller
+
+The Go Controller is the main backend service that handles message processing, client connections, and serves the web interface. It receives messages from the ROS Gateway via ZeroMQ, processes them through priority-based worker pools, and delivers data to clients through WebSocket, WebRTC, and REST APIs.
+
+### 2.5 Web UI
+
+The Web UI is an administrative interface built with HTML, CSS, and JavaScript that provides system configuration, monitoring, and verification capabilities for the Open-Teleop platform.
+
+#### 2.5.1 System Dashboard
+- **Role**: Displays overall system health and status
+- **Responsibilities**:
+  - Component status monitoring (ROS Gateway, Media Gateway, A/V Node)
+  - Resource utilization metrics
+  - Connection status indicators
+  - Error and alert notifications
+
+#### 2.5.2 Configuration Manager
+- **Role**: Provides configuration management interface
+- **Responsibilities**:
+  - Topic mapping configuration
+  - System parameter adjustment
+  - Configuration validation and testing
+  - Import/export configuration files
+
+#### 2.5.3 Stream Verification
+- **Role**: Allows verification of video and data streams
+- **Responsibilities**:
+  - Display video feeds for testing purposes
+  - Monitor stream quality and performance
+  - Validate encoding and transmission
+  - Debug stream issues
+
+#### 2.5.4 Topic Monitor
+- **Role**: Monitors ROS topic activity and data flow
+- **Responsibilities**:
+  - Real-time topic data visualization
+  - Message frequency and size monitoring
+  - Topic discovery and introspection
+  - Data flow debugging tools
+
+#### 2.4.1 Message Processing
 
 ##### MessageReceiver
-- **Role**: Receives messages from the Universal Bridge
+- **Role**: Receives messages from the ROS Gateway
 - **Responsibilities**:
   - Maintain ZeroMQ server socket
-  - Receive and deserialize OttMessages
+  - Receive and deserialize OttMessages using FlatBuffers
   - Initial validation of messages
   - Forward to MessageDirector
 
@@ -146,16 +244,23 @@ The Controller layer processes messages from the bridge and provides interfaces 
 
 ### 3.1 Uplink Path (Robot → Client)
 
-1. **ROS Topic → Universal Bridge**:
+1. **ROS Topic → ROS Gateway**:
    - Robot publishes data to ROS topics
-   - Universal Bridge subscribes to configured topics
+   - ROS Gateway subscribes to configured topics
    - Raw messages received by Topic Subscriber
 
-2. **Within Universal Bridge**:
+2. **Within ROS Gateway**:
    - Message Converter wraps raw data in OttMessage
    - OTT identifier assigned based on configuration
    - Priority level set based on topic configuration
-   - ZeroMQ Client sends to controller
+   - ZeroMQ Client sends to controller using FlatBuffers
+
+3. **Media Pipeline (for A/V data)**:
+   - Media Gateway captures from hardware devices
+   - GStreamer pipelines encode video/audio
+   - Encoded frames sent to A/V Node
+   - A/V Node publishes as ROS2 messages
+   - ROS Gateway forwards to controller
 
 3. **Controller Processing**:
    - MessageReceiver receives OttMessage
@@ -172,15 +277,15 @@ The Controller layer processes messages from the bridge and provides interfaces 
 ### 3.2 Downlink Path (Client → Robot)
 
 1. **Client → Protocol Server**:
-   - Client sends command via appropriate protocol
+   - Client sends command via WebSocket, WebRTC, or REST
    - Protocol Server receives and validates
    - Command forwarded to controller
 
 2. **Controller Processing**:
-   - Command processed and converted to appropriate format
-   - Sent to Universal Bridge via ZeroMQ
+   - Command processed and converted to OttMessage format
+   - Sent to ROS Gateway via ZeroMQ using FlatBuffers
 
-3. **Universal Bridge → ROS**:
+3. **ROS Gateway → ROS**:
    - Command received by ZeroMQ Client
    - Converted to appropriate ROS message
    - Published to configured ROS topic
@@ -270,12 +375,12 @@ The OTT naming convention provides a standardized way to reference topics:
 
 ## 6. Design Decisions and Rationale
 
-### 6.1 Universal Bridge vs Multiple Bridges
+### 6.1 ROS Gateway vs Multiple Bridges
 
-**Decision**: Use a single Universal Bridge instead of multiple specialized bridges.
+**Decision**: Use a single ROS Gateway instead of multiple specialized bridges.
 
 **Rationale**:
-- **Simplified Deployment**: Managing a single bridge is simpler than multiple bridges
+- **Simplified Deployment**: Managing a single gateway is simpler than multiple bridges
 - **Reduced Resource Usage**: Fewer processes, shared resources
 - **No Artificial Boundaries**: Topics don't need to be categorized into specific bridges
 - **Configuration-Driven**: New topics added via configuration, not code changes
@@ -312,13 +417,23 @@ The OTT naming convention provides a standardized way to reference topics:
 
 ### 6.5 ZeroMQ for Internal Communication
 
-**Decision**: Use ZeroMQ for bridge-to-controller communication.
+**Decision**: Use ZeroMQ for gateway-to-controller communication.
 
 **Rationale**:
 - **Performance**: High-throughput, low-latency messaging
 - **Reliability**: Built-in reconnection and error handling
 - **Flexibility**: Supports multiple messaging patterns
-- **Language Agnostic**: Works with both Python (bridge) and Go (controller)
+- **Language Agnostic**: Works with both Python (gateway) and Go (controller)
+
+### 6.6 Separate Media Gateway
+
+**Decision**: Use a dedicated Media Gateway service for A/V capture and encoding.
+
+**Rationale**:
+- **Hardware Abstraction**: Isolates hardware-specific code from ROS ecosystem
+- **Performance**: GStreamer provides optimized encoding pipelines
+- **Flexibility**: Can support multiple encoding formats and devices
+- **Modularity**: A/V processing can be deployed independently
 
 ## 7. Future Development
 

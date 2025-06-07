@@ -4,11 +4,15 @@ This document provides all the information you need to set up your development e
 
 ## Project Overview
 
-Open-Teleop is a distributed system that enables remote operation of robots by providing a standardized way to stream sensor data, video, and command information between robots and operators. The architecture consists of:
+Open-Teleop is a distributed robotics teleoperation platform that enables remote operation of robots by providing a standardized way to stream sensor data, video, and command information between robots and operators. The architecture consists of five main components:
 
-1. **Robot ROS Nodes** - The native ROS2 ecosystem running on the robot
-2. **Bridge Nodes Container** - Python/C++ bridges that connect to ROS topics and forward data
-3. **Controller Container** - Go-based services that process data and provide APIs
+1. **ROS Gateway** (`ros2_ws/src/ros_gateway/`) - Python ROS2 node that bridges ROS topics to/from the controller via ZeroMQ using FlatBuffers serialization
+2. **Go Controller** (`controller/`) - Main backend that processes messages, serves web UI, and handles client connections via WebSocket/WebRTC/REST
+3. **Media Gateway** (`media-gateway/`) - Python service for hardware A/V capture and encoding using GStreamer
+4. **A/V Node** (`ros2_ws/src/open_teleop_av_node/`) - ROS2 node that handles encoded video frame processing and streaming
+5. **Web UI** (`controller/web/static/`) - Frontend interface for teleoperation control and video streaming
+
+Communication flow: ROS Topics ↔ ROS Gateway ↔ Controller ↔ Web Clients
 
 For a more detailed overview, see [architecture.md](architecture.md).
 
@@ -22,8 +26,9 @@ You'll need the following installed on your development machine:
 - **Docker and Docker Compose** - For containerized development and testing
 - **FlatBuffers compiler (flatc)** - For interface code generation
 - **Git** - For version control
-- **Python 3.8+** - For ROS2 development
+- **Python 3.8+** - For ROS2 development and Media Gateway
 - **colcon** - For building ROS2 packages
+- **GStreamer** - For media capture and encoding in Media Gateway
 
 ### Required ROS2 Packages
 
@@ -40,8 +45,10 @@ All required Go packages are specified in the `go.mod` file. They will be automa
 
 ### Required Python Packages
 
-The following Python packages are needed for the ROS2 bridges:
+The following Python packages are needed for the ROS2 bridges and Media Gateway:
 - pyzmq (Python ZeroMQ bindings)
+- gstreamer-python (for Media Gateway)
+- opencv-python (for image processing)
 
 ## Setting Up Your Development Environment
 
@@ -69,9 +76,15 @@ sudo apt-get install -y \
     ros-jazzy-navigation2 \
     ros-jazzy-nav2-bringup
 
-# Install ZeroMQ
-sudo apt-get install -y libzmq3-dev python3-pip
-pip3 install pyzmq
+# Install ZeroMQ and GStreamer
+sudo apt-get install -y libzmq3-dev python3-pip \
+    gstreamer1.0-tools gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly python3-gi python3-gi-cairo \
+    gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0
+
+# Install Python packages
+pip3 install pyzmq opencv-python
 
 # Install Go (if not already installed)
 # See: https://golang.org/doc/install
@@ -105,67 +118,96 @@ export ROS_DOMAIN_ID=42
 
 ### Building the Project
 
-#### Option 1: Building with Docker (Recommended for Full System Testing)
-
-This builds both components in containers:
+Use the main build script for streamlined building:
 
 ```bash
-# From the project root directory
-cd infra
-docker-compose build
+# Build everything (recommended)
+./scripts/build.sh all
+
+# Build individual components
+./scripts/build.sh gateway      # ROS Gateway only
+./scripts/build.sh controller   # Go controller only  
+./scripts/build.sh fbs          # Generate FlatBuffers interfaces only
+./scripts/build.sh av_node      # A/V node only
+
+# Clean all build artifacts
+./scripts/build.sh clean
+
+# Install to directory
+./scripts/build.sh install [directory]
 ```
 
-#### Option 2: Building Locally (Recommended for Development)
+#### Alternative: Manual Building Steps
+
+If you need to build components manually:
 
 **1. Generate Interface Code**:
-
 ```bash
-# From the project root directory
 ./scripts/generate_interfaces.sh
 ```
 
-**2. Build ROS2 Bridges**:
-
+**2. Build ROS2 Components**:
 ```bash
-# From the project root directory
 cd ros2_ws
 colcon build --symlink-install
 source install/setup.bash
 ```
 
 **3. Build Go Controller**:
-
 ```bash
-# From the project root directory
 cd controller
 go build -o bin/controller ./cmd/controller
 ```
 
-### Running the Project
-
-#### Option 1: Running with Docker
-
+**4. Build Media Gateway**:
 ```bash
-# From the project root directory
-cd infra
-docker-compose up
+cd media-gateway
+pip install -e .
 ```
 
-#### Option 2: Running Locally
+### Running the Project
 
-**Terminal 1 (ROS2 Bridges)**:
+Use the provided run scripts for easy startup:
+
 ```bash
-# From the project root directory
-cd ros2_ws
-source install/setup.bash
-ros2 launch ros_gateway gateway.launch.py
+# Run individual components (auto-builds if needed)
+./scripts/run_controller.sh     # Go controller
+./scripts/run_gateway.sh        # ROS gateway
+./scripts/run_media_gateway.sh  # Media gateway
+./scripts/run_av_node.sh        # A/V node
+```
+
+#### Typical Development Workflow
+
+**Terminal 1 (ROS Gateway)**:
+```bash
+./scripts/run_gateway.sh
 ```
 
 **Terminal 2 (Go Controller)**:
 ```bash
-# From the project root directory
-cd controller
-./bin/controller
+./scripts/run_controller.sh
+```
+
+**Terminal 3 (Media Gateway - if using video)**:
+```bash
+./scripts/run_media_gateway.sh
+```
+
+**Terminal 4 (A/V Node - if using video)**:
+```bash
+./scripts/run_av_node.sh
+```
+
+#### Docker Deployment
+
+```bash
+# Multi-container deployment
+docker-compose up
+
+# Single runtime container  
+docker build -f Dockerfile.runtime -t open-teleop-runtime .
+docker run --rm -p 8080:8080 open-teleop-runtime
 ```
 
 ### Accessing the System
@@ -197,7 +239,9 @@ go test ./...
 ```bash
 # From the project root directory
 cd tests
-./run_integration_tests.sh
+# Use test scripts in tests/ros2-scripts/ for development and debugging
+python tests/ros2-scripts/pub.py  # Test publisher
+python tests/ros2-scripts/sub.py  # Test subscriber
 ```
 
 ## Development Best Practices
@@ -206,6 +250,9 @@ cd tests
 
 - Follow standard ROS2 package structure in `ros2_ws/src` directory
 - Keep Go code in the `controller` directory
+- Media Gateway Python code lives in `media-gateway/` directory
+- Web UI static files are in `controller/web/static/`
+- Configuration files are in `config/` directory
 
 ### Contribution Workflow
 
@@ -217,8 +264,10 @@ cd tests
 ### Debugging Tips
 
 - Use `ros2 topic echo` to view ROS2 topics
-- Check logs in both the ROS2 bridge and Go controller
-- Use Docker logs for containerized deployment
+- Check logs in ROS2 gateway, Go controller, and Media Gateway
+- Web UI accessible at `http://localhost:8080` when controller is running
+- ZeroMQ ports: 5555 (request/reply), 5556 (publish/subscribe)
+- Use test scripts in `tests/ros2-scripts/` for development and debugging
 
 ## Project Roadmap
 
