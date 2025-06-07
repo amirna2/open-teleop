@@ -4,11 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture Overview
 
-Open-Teleop is a distributed robotics teleoperation platform with three main components:
+Open-Teleop is a distributed robotics teleoperation platform with five main components:
 
 1. **ROS Gateway** (`ros2_ws/src/ros_gateway/`) - Python ROS2 node that bridges ROS topics to/from the controller via ZeroMQ using FlatBuffers serialization
 2. **Go Controller** (`controller/`) - Main backend that processes messages, serves web UI, and handles client connections via WebSocket/WebRTC/REST
 3. **Media Gateway** (`media-gateway/`) - Python service for hardware A/V capture and encoding using GStreamer
+4. **A/V Node** (`ros2_ws/src/open_teleop_av_node/`) - ROS2 node that handles encoded video frame processing and streaming
+5. **Web UI** (`controller/web/static/`) - Frontend interface for teleoperation control and video streaming
 
 Communication flow: ROS Topics ↔ ROS Gateway ↔ Controller ↔ Web Clients
 
