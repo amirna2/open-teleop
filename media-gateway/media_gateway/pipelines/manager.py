@@ -18,7 +18,7 @@ gi.require_version('Gst', '1.0')
 from gi.repository import Gst, GLib
 
 # Import the generated FlatBuffer code (same as ros2 gateway)
-from media_gateway.flatbuffers.open_teleop.message import ContentType
+from media_gateway.flatbuffers.open_teleop.message.ContentType import ContentType
 from media_gateway.flatbuffers.open_teleop.message.FrameType import FrameType
 from media_gateway.flatbuffers.open_teleop.message.OttMessage import (
     OttMessageStart,
@@ -150,13 +150,10 @@ class GstMediaPipeline:
                 self.source = Gst.ElementFactory.make("v4l2src", f"source_{self.stream_id}")
                 self.source.set_property("device", self.device_path)
                 
-                # Create videoconvert for format conversion
-                videoconvert = Gst.ElementFactory.make("videoconvert", f"vconv_{self.stream_id}")
-                
-                # Create caps filter for source format
+                # Create caps filter for MJPG source format
                 src_caps = Gst.ElementFactory.make("capsfilter", f"src_caps_{self.stream_id}")
                 caps_str = (
-                    f"video/x-raw,"
+                    f"image/jpeg,"
                     f"width={self.width},"
                     f"height={self.height},"
                     f"framerate={self.framerate}/1"
@@ -164,16 +161,25 @@ class GstMediaPipeline:
                 caps = Gst.Caps.from_string(caps_str)
                 src_caps.set_property("caps", caps)
                 
+                # Create JPEG decoder
+                jpegdec = Gst.ElementFactory.make("jpegdec", f"jpegdec_{self.stream_id}")
+                
+                # Create videoconvert for format conversion
+                videoconvert = Gst.ElementFactory.make("videoconvert", f"vconv_{self.stream_id}")
+                
                 # Add elements to pipeline
                 self.pipeline.add(self.source)
                 self.pipeline.add(src_caps)
+                self.pipeline.add(jpegdec)
                 self.pipeline.add(videoconvert)
                 
                 # Link source chain
                 if not self.source.link(src_caps):
                     raise RuntimeError(f"Failed to link source to caps for {self.stream_id}")
-                if not src_caps.link(videoconvert):
-                    raise RuntimeError(f"Failed to link caps to videoconvert for {self.stream_id}")
+                if not src_caps.link(jpegdec):
+                    raise RuntimeError(f"Failed to link caps to jpegdec for {self.stream_id}")
+                if not jpegdec.link(videoconvert):
+                    raise RuntimeError(f"Failed to link jpegdec to videoconvert for {self.stream_id}")
                 
                 last_element = videoconvert
                 

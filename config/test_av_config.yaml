@@ -76,8 +76,8 @@ media_mappings:
       topic_id: "f0000001-aaaa-bbbb-cccc-d701748f0007"
       encoding_format: "video/h264"
       encoder_params:
-        width: 1920
-        height: 1080
+        width: 1280
+        height: 720
         framerate: 30
         bitrate: 4000
         gop_size: 15
