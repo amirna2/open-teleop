@@ -358,7 +358,7 @@ func setupHTTPServer(cfg *config.Config, teleopConfigService services.TeleopConf
 	// TODO: Make static path configurable?
 	app.Static("/", "controller/web/static", fiber.Static{
 		Index:         "index.html",
-		CacheDuration: 1 * time.Second, // Disable caching for dev
+		CacheDuration: 0, // Completely disable caching for dev
 	})
 
 	logger.Infof("Registering API routes...")

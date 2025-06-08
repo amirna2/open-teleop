@@ -1,6 +1,6 @@
 // Main orchestrating script - UPDATED VERSION 2025-01-25
 
-console.log("main.js loaded - VERSION 2025-01-25");
+console.log("main.js loaded");
 
 document.addEventListener('DOMContentLoaded', () => {
     console.log('DOM fully loaded and parsed');
