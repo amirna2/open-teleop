@@ -1,5 +1,13 @@
 <script lang="ts">
-	// TODO: Import actual components when implemented in Phase 2+
+	import VideoCard from '$lib/components/cards/VideoCard.svelte';
+	import ControlCard from '$lib/components/cards/ControlCard.svelte';
+	import { videoStreamActions } from '$lib/stores/video';
+	import { onMount } from 'svelte';
+
+	onMount(() => {
+		// Ensure primary stream is registered
+		videoStreamActions.registerStream('primary', 'Primary Video Stream');
+	});
 </script>
 
 <div class="teleop-view">
@@ -9,34 +17,23 @@
 	</div>
 	
 	<div class="teleop-grid">
-		<!-- Default layout: Large video card + overlay control card -->
+		<!-- WebCodecs Video Card - EXACT preservation of functionality -->
 		<div class="video-card-main">
-			<div class="card">
-				<div class="card-header">
-					<h3>Primary Video Stream</h3>
-					<span class="status-indicator connected">●</span>
-				</div>
-				<div class="card-content">
-					<div class="video-placeholder">
-						<p>Video stream placeholder</p>
-						<small>WebCodecs integration coming in Phase 2</small>
-					</div>
-				</div>
-			</div>
+			<VideoCard 
+				title="Primary Video Stream" 
+				streamId="primary"
+				showStats={true}
+				allowOverlayToggle={true}
+			/>
 		</div>
 		
+		<!-- Control card with joystick - EXACT preservation of functionality -->
 		<div class="control-card-overlay">
-			<div class="card">
-				<div class="card-header">
-					<h3>Robot Control</h3>
-				</div>
-				<div class="card-content">
-					<div class="joystick-placeholder">
-						<div class="joystick-circle">🎮</div>
-						<small>Joystick integration coming in Phase 3</small>
-					</div>
-				</div>
-			</div>
+			<ControlCard 
+				title="Robot Control" 
+				controlId="primary"
+				autoConnect={true}
+			/>
 		</div>
 	</div>
 </div>
@@ -128,35 +125,4 @@
 		color: #ffffff;
 	}
 
-	.status-indicator {
-		font-size: 1.2rem;
-	}
-
-	.status-indicator.connected {
-		color: #14a085;
-	}
-
-	.card-content {
-		flex: 1;
-		padding: 1rem;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-direction: column;
-	}
-
-	.video-placeholder {
-		text-align: center;
-		color: #cccccc;
-	}
-
-	.joystick-placeholder {
-		text-align: center;
-		color: #cccccc;
-	}
-
-	.joystick-circle {
-		font-size: 3rem;
-		margin-bottom: 0.5rem;
-	}
 </style>
