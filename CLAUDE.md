@@ -94,3 +94,7 @@ docker-compose up
 docker build -f Dockerfile.runtime -t open-teleop-runtime .
 docker run --rm -p 8080:8080 open-teleop-runtime
 ```
+
+## Key Memories
+
+- Never operate under assumptions..ever. look/search into code to verify the assumption first before you decide to share it.
