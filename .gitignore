@@ -108,3 +108,29 @@ COLCON_IGNORE
 # FlatBuffers generated code
 controller/pkg/flatbuffers/
 **/flatbuffers/
+
+# Node.js / npm specific
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.npmrc
+.yarn-integrity
+.yarn/
+.pnp.*
+
+# Svelte / SvelteKit specific
+.svelte-kit/
+/build
+/package
+.env
+.env.local
+.env.*.local
+
+# Svelte build artifacts
+controller/web/static/dist/
+**/web/static/dist/
+
+# TypeScript
+*.tsbuildinfo

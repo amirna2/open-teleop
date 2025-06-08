@@ -355,8 +355,14 @@ func setupHTTPServer(cfg *config.Config, teleopConfigService services.TeleopConf
 	app.Use(recover.New())
 
 	logger.Infof("Registering static file serving...")
-	// TODO: Make static path configurable?
-	app.Static("/", "controller/web/static", fiber.Static{
+	// Serve Svelte build artifacts (mini-web-ui) as the primary interface
+	app.Static("/", "controller/web/static/dist", fiber.Static{
+		Index:         "index.html",
+		CacheDuration: 0, // Completely disable caching for dev
+	})
+	
+	// Serve legacy static files under /legacy for fallback/development
+	app.Static("/legacy", "controller/web/static", fiber.Static{
 		Index:         "index.html",
 		CacheDuration: 0, // Completely disable caching for dev
 	})

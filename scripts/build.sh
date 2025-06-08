@@ -44,7 +44,8 @@ show_help() {
     echo "Commands:"
     echo "  all             Build all components (default if no command specified)"
     echo "  gateway         Build only ROS Gateway node"
-    echo "  controller      Build only Go controller"
+    echo "  controller      Build only Go controller (includes web UI)"
+    echo "  webui           Build only Svelte web UI"
     echo "  fbs             Generate FlatBuffers interface code only"
     echo "  install [DIR]   Install built artifacts to specified directory (default: ./install)"
     echo "  clean           Clean all build artifacts"
@@ -92,6 +93,20 @@ check_dependencies() {
         if ! command_exists go; then
             print_error "Error: Go compiler not found."
             print_error "Please install Go from https://golang.org/doc/install"
+            exit 1
+        fi
+    fi
+    
+    # Check Node.js and npm for web UI builds
+    if [[ "$CMD" == "all" || "$CMD" == "controller" || "$CMD" == "webui" ]]; then
+        if ! command_exists node; then
+            print_error "Error: Node.js not found."
+            print_error "Please install Node.js from https://nodejs.org/"
+            exit 1
+        fi
+        if ! command_exists npm; then
+            print_error "Error: npm not found."
+            print_error "npm should be included with Node.js installation"
             exit 1
         fi
     fi
@@ -192,6 +207,20 @@ clean_build() {
         ./scripts/build_media_gateway.sh clean
     fi
     
+    # Clean Svelte web UI build artifacts
+    if [ -d "controller/web/static/dist" ]; then
+        print_status "Cleaning Svelte web UI build artifacts..."
+        rm -rf controller/web/static/dist
+        echo -e "${GREEN}✓ Removed controller/web/static/dist directory${NC}"
+    fi
+    
+    # Clean node_modules if it exists
+    if [ -d "controller/web/svelte/node_modules" ]; then
+        print_status "Cleaning node_modules..."
+        rm -rf controller/web/svelte/node_modules
+        echo -e "${GREEN}✓ Removed controller/web/svelte/node_modules directory${NC}"
+    fi
+    
     echo -e "${GREEN}✓ Cleanup complete${NC}"
 }
 
@@ -219,6 +248,44 @@ generate_interfaces() {
         print_error "Error generating interface code"
         exit 1
     fi
+}
+
+# Build Svelte web UI
+build_webui() {
+    print_section "Building Svelte Web UI"
+    
+    if [ ! -d "controller/web/svelte" ]; then
+        print_error "Error: controller/web/svelte directory not found."
+        exit 1
+    fi
+    
+    cd controller/web/svelte
+    
+    # Check if package.json exists
+    if [ ! -f "package.json" ]; then
+        print_error "Error: package.json not found in controller/web/svelte"
+        exit 1
+    fi
+    
+    print_status "Installing npm dependencies..."
+    npm install
+    
+    if [ $? -eq 0 ]; then
+        print_status "Building Svelte application..."
+        npm run build
+        
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}✓ Svelte web UI build complete${NC}"
+        else
+            print_error "Error building Svelte application"
+            exit 1
+        fi
+    else
+        print_error "Error installing npm dependencies"
+        exit 1
+    fi
+    
+    cd ../../..  # Return to project root
 }
 
 # Build ROS2 gateway node
@@ -308,6 +375,9 @@ build_go() {
     if [ "$CMD" != "all" ]; then
         generate_interfaces
     fi
+    
+    # Build Svelte web UI first
+    build_webui
     
     # Build ROS parser C++ library
     print_status "Building ROS parser C++ library..."
@@ -559,6 +629,7 @@ main() {
         all)
             check_dependencies
             generate_interfaces
+            build_webui
             build_ros2
             build_go
             
@@ -587,6 +658,10 @@ main() {
         controller)
             check_dependencies
             build_go
+            ;;
+        webui)
+            check_dependencies
+            build_webui
             ;;
         fbs)
             check_dependencies
