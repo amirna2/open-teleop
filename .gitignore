@@ -1,9 +1,9 @@
-# ROS 1 specific
+# ROS specific
 devel/
 logs/
 build/
 bin/
-lib/
+./lib/
 msg_gen/
 srv_gen/
 msg/*Action.msg
@@ -61,7 +61,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
 lib64/
 parts/
 sdist/

@@ -33,6 +33,7 @@
 				title="Robot Control" 
 				controlId="primary"
 				autoConnect={true}
+				movable={true}
 			/>
 		</div>
 	</div>
@@ -90,13 +91,12 @@
 	}
 
 	.control-card-overlay {
-		grid-column: 1;
-		grid-row: 1;
-		z-index: 2;
-		align-self: end;
-		justify-self: end;
+		position: absolute;
+		top: auto;
+		bottom: 1rem;
+		right: 1rem;
 		width: 250px;
 		height: 200px;
-		margin: 1rem;
+		z-index: 2;
 	}
 </style>
