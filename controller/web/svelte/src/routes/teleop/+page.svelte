@@ -1,8 +1,8 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import VideoCard from '$lib/components/cards/VideoCard.svelte';
 	import ControlCard from '$lib/components/cards/ControlCard.svelte';
 	import { videoStreamActions } from '$lib/stores/video';
-	import { onMount } from 'svelte';
 
 	onMount(() => {
 		// Ensure primary stream is registered
@@ -17,7 +17,7 @@
 	</div>
 	
 	<div class="teleop-grid">
-		<!-- WebCodecs Video Card - EXACT preservation of functionality -->
+		<!-- Full-screen video background - EXACT preservation of functionality -->
 		<div class="video-card-main">
 			<VideoCard 
 				title="Primary Video Stream" 
@@ -27,7 +27,7 @@
 			/>
 		</div>
 		
-		<!-- Control card with joystick - EXACT preservation of functionality -->
+		<!-- Control card overlay - can be moved but not resized -->
 		<div class="control-card-overlay">
 			<ControlCard 
 				title="Robot Control" 
@@ -99,30 +99,4 @@
 		height: 200px;
 		margin: 1rem;
 	}
-
-	.card {
-		background-color: #1e1e1e;
-		border: 1px solid #444;
-		border-radius: 8px;
-		height: 100%;
-		display: flex;
-		flex-direction: column;
-	}
-
-	.card-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		padding: 0.75rem 1rem;
-		border-bottom: 1px solid #444;
-		background-color: #2a2a2a;
-		border-radius: 8px 8px 0 0;
-	}
-
-	.card-header h3 {
-		margin: 0;
-		font-size: 1rem;
-		color: #ffffff;
-	}
-
 </style>

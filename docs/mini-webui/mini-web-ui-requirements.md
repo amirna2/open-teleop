@@ -38,25 +38,31 @@ This document outlines the functional requirements for the "Mini Web UI," a loca
 
 ### 3.3. Card-Based Design
 - **FR-3.3.1:** All functional components in the Teleop view shall be displayed within self-contained "cards."
-- **FR-3.3.2:** Cards shall be arranged in a grid-like fashion.
-- **FR-3.3.3:** Each card must have a header displaying its title (e.g., "Primary Video Stream").
+- **FR-3.3.2:** The primary video card shall occupy the full background area (non-movable, non-resizable).
+- **FR-3.3.3:** Additional cards shall be positioned as overlay cards over the main video with fixed dimensions.
+- **FR-3.3.4:** Overlay cards shall be movable via drag functionality but NOT resizable.
+- **FR-3.3.5:** Each card must have a header displaying its title (e.g., "Primary Video Stream").
 
 ## 4. Component-Specific Requirements
 
 ### 4.1. Video Cards
 - **FR-4.1.1:** Each video card shall display a live video stream.
-- **FR-4.1.2:** A user must be able to click on any video card to swap it into the main, larger video card slot.
-- **FR-4.1.3:** Each video card header shall contain a status icon indicating the stream's state (e.g., Connected, Disconnected, Error).
-- **FR-4.1.4:** Video cards must support telemetry overlays (e.g., occupancy grids).
-- **FR-4.1.5:** An overlay toggle button must be available on video cards to show or hide telemetry data.
+- **FR-4.1.2:** The primary video card shall be full-screen and non-movable.
+- **FR-4.1.3:** Additional video cards shall be fixed-size overlays that can be moved via drag.
+- **FR-4.1.4:** A user must be able to click on any overlay video card to swap it into the main video card slot.
+- **FR-4.1.5:** Each video card header shall contain a status icon indicating the stream's state (e.g., Connected, Disconnected, Error).
+- **FR-4.1.6:** Video cards must support telemetry overlays (e.g., occupancy grids).
+- **FR-4.1.7:** An overlay toggle button must be available on video cards to show or hide telemetry data.
 
 ### 4.2. Control Cards
 - **FR-4.2.1:** Control cards shall display a single, non-customizable virtual joystick interface for robot control.
-- **FR-4.2.2:** The joystick's visual style and behavior shall be consistent across all control cards.
+- **FR-4.2.2:** Control cards shall be fixed-size overlay cards that can be moved via drag.
+- **FR-4.2.3:** The joystick's visual style and behavior shall be consistent across all control cards.
 
 ### 4.3. Robot Health
-- **FR-4.3.1:** Robot-specific health metrics (e.g., battery level, temperature) shall be displayed as an overlay card.
-- **FR-4.3.2:** This robot health card shall be addable via the Teleop view toolbar.
+- **FR-4.3.1:** Robot-specific health metrics (e.g., battery level, temperature) shall be displayed as a fixed-size overlay card.
+- **FR-4.3.2:** Robot health cards shall be movable via drag functionality.
+- **FR-4.3.3:** This robot health card shall be addable via the Teleop view toolbar.
 
 ### 4.4. Status Indicators
 - **FR-4.4.1:** All status indicators throughout the UI (e.g., for connections, streams) must use a consistent set of icons (e.g., green for connected, yellow for warning, red for error).
@@ -74,5 +80,7 @@ This document outlines the functional requirements for the "Mini Web UI," a loca
 - **NFR-6.1.1:** The UI must remain responsive and performant, even with multiple video streams active.
 ### 6.2. Simplicity
 - **NFR-6.2.1:** The UI shall avoid complex customization options. Component selection and layout adjustments are limited to the functionality provided by the toolbar.
+- **NFR-6.2.2:** Cards shall NOT be resizable to maintain simplicity and avoid complex grid layout systems.
+- **NFR-6.2.3:** Only simple drag-to-move functionality is provided for overlay cards positioned over the main video.
 ### 6.3. Reusability
 - **NFR-6.3.1:** The implementation shall reuse existing backend APIs and frontend components where possible to minimize development effort. 

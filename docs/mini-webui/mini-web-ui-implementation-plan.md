@@ -82,8 +82,9 @@ This document outlines the implementation plan for replacing the current web UI 
 
 1. **Card-Based Architecture**
    - Implement base Card component with header and content slots
-   - Create dynamic grid system for card placement
-   - Implement card resizing and repositioning logic
+   - Create overlay positioning system for movable cards
+   - **NO RESIZE functionality** - cards maintain fixed dimensions
+   - Focus on simple drag-to-move overlay cards only
 
 2. **Control Components**
    - Port joystick implementation to Svelte ControlCard component
@@ -99,9 +100,10 @@ This document outlines the implementation plan for replacing the current web UI 
    - Connect to configuration to determine available streams
 
 2. **Component Management**
-   - Implement dynamic component addition/removal
-   - Create component registry tied to teleop configuration
-   - Add component-specific configuration options
+   - Implement dynamic component addition/removal as overlay cards
+   - **Fixed-size overlay cards** positioned over main video
+   - Simple drag-to-move functionality for repositioning overlays
+   - **NO RESIZE** - components maintain predefined dimensions
 
 3. **Status & Health Metrics**
    - Implement robot health overlay card
@@ -142,10 +144,10 @@ controller/web/
 │   │   │   │   │   ├── Sidebar.svelte
 │   │   │   │   │   └── Footer.svelte
 │   │   │   │   ├── cards/
-│   │   │   │   │   ├── BaseCard.svelte
-│   │   │   │   │   ├── VideoCard.svelte
-│   │   │   │   │   ├── ControlCard.svelte
-│   │   │   │   │   └── HealthCard.svelte
+│   │   │   │   │   ├── BaseCard.svelte        # Fixed-size card with move capability
+│   │   │   │   │   ├── VideoCard.svelte       # Full-screen main video (NO RESIZE)
+│   │   │   │   │   ├── ControlCard.svelte     # Fixed-size overlay (movable)
+│   │   │   │   │   └── HealthCard.svelte      # Fixed-size overlay (movable)
 │   │   │   │   ├── ui/
 │   │   │   │   │   ├── Toolbar.svelte
 │   │   │   │   │   ├── StatusIndicator.svelte
