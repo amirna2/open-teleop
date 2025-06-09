@@ -129,14 +129,15 @@
 
 <style>
 	.base-card {
-		background-color: #1e1e1e;
-		border: 1px solid #444;
+		background-color: rgba(30, 30, 30, 0.7);
+		border: 1px solid rgba(68, 68, 68, 0.7);
 		border-radius: 8px;
 		overflow: hidden;
 		display: flex;
 		flex-direction: column;
 		height: 100%;
 		transition: border-color 0.3s ease, box-shadow 0.3s ease;
+		backdrop-filter: blur(4px);
 	}
 	
 	.base-card.movable {
@@ -162,8 +163,8 @@
 		justify-content: space-between;
 		align-items: center;
 		padding: 0.3rem 1rem;
-		background-color: #2a2a2a;
-		border-bottom: 1px solid #444;
+		background-color: rgba(42, 42, 42, 0.8);
+		border-bottom: 1px solid rgba(68, 68, 68, 0.7);
 		min-height: 2.5rem;
 	}
 	
@@ -256,8 +257,8 @@
 	}
 
 	.card-footer {
-		border-top: 1px solid #444;
-		background-color: #2a2a2a;
+		border-top: 1px solid rgba(68, 68, 68, 0.7);
+		background-color: rgba(42, 42, 42, 0.8);
 		padding: 0.5rem 1rem;
 		font-size: 0.875rem;
 		color: #cccccc;
