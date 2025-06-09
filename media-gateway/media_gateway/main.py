@@ -102,6 +102,12 @@ class MediaGateway:
         self._last_device_state = None
         self._discovery_task = None
         
+        # Store reference to main event loop for cross-thread async calls
+        self._main_loop = None
+        
+        # Store previous config for change detection
+        self.previous_config = None
+        
         # Get ZeroMQ configuration (ENV > YAML > Default) - same as ros-gateway
         zmq_config = self.bootstrap_config.get('media_gateway', {}).get('zmq', {})
         controller_address = os.environ.get('TELEOP_ZMQ_CONTROLLER_ADDRESS') or zmq_config.get('controller_address', 'tcp://localhost:5555')
@@ -395,16 +401,106 @@ class MediaGateway:
         """Apply the received configuration to relevant components. (Same pattern as ros-gateway)"""
         self.logger.info(f"Applying new configuration (ID: {new_config.get('config_id', 'N/A')}, Version: {new_config.get('version', 'N/A')})")
         
+        # Check if media mappings changed before updating streams
+        media_config_changed = self.has_media_config_changed(self.config, new_config)
+        
         # Update the gateway's stored configuration
+        self.previous_config = self.config.copy() if self.config else None
         self.config = new_config
         self.logger.info("Gateway configuration state updated.")
         
-        # Update pipeline manager with new media mappings
-        if self.pipeline_manager:
-            asyncio.create_task(self.pipeline_manager.update_streams(new_config))
+        # Update pipeline manager only if media mappings actually changed
+        if media_config_changed:
+            if self.pipeline_manager and self._main_loop:
+                try:
+                    # Schedule the coroutine to run in the main event loop thread
+                    future = asyncio.run_coroutine_threadsafe(
+                        self.pipeline_manager.update_streams(new_config), 
+                        self._main_loop
+                    )
+                    self.logger.info("Successfully scheduled pipeline stream update")
+                except Exception as e:
+                    self.logger.error(f"Error scheduling pipeline stream update: {e}")
+            elif self.pipeline_manager:
+                self.logger.warning("Pipeline manager available but no main event loop reference")
+            else:
+                self.logger.debug("No pipeline manager to update")
+        else:
+            self.logger.info("Media mappings unchanged, skipping pipeline stream update")
         
 
             
+    def has_media_config_changed(self, old_config, new_config):
+        """Check if media mappings configuration has changed."""
+        if old_config is None:
+            # First time configuration, always update
+            return True
+            
+        # Extract media mappings from both configs
+        old_media_mappings = old_config.get('media_mappings', {})
+        new_media_mappings = new_config.get('media_mappings', {})
+        
+        # Compare video mappings
+        old_video = old_media_mappings.get('video', [])
+        new_video = new_media_mappings.get('video', [])
+        
+        if len(old_video) != len(new_video):
+            self.logger.info(f"Video mapping count changed: {len(old_video)} -> {len(new_video)}")
+            return True
+            
+        # Create lookup dictionaries by device_id for video comparison
+        old_video_by_device = {mapping.get('device_id'): mapping for mapping in old_video}
+        new_video_by_device = {mapping.get('device_id'): mapping for mapping in new_video}
+        
+        # Check if any video device IDs changed
+        if set(old_video_by_device.keys()) != set(new_video_by_device.keys()):
+            self.logger.info("Video mapping device IDs changed")
+            return True
+            
+        # Check if any video mapping parameters changed
+        for device_id in old_video_by_device:
+            old_mapping = old_video_by_device[device_id]
+            new_mapping = new_video_by_device[device_id]
+            
+            # Compare relevant fields for video mappings
+            fields_to_compare = ['ott', 'encoding_format', 'encoder_params', 'priority', 'direction']
+            for field in fields_to_compare:
+                if old_mapping.get(field) != new_mapping.get(field):
+                    self.logger.info(f"Video mapping {device_id} field '{field}' changed: {old_mapping.get(field)} -> {new_mapping.get(field)}")
+                    return True
+        
+        # Compare audio mappings
+        old_audio = old_media_mappings.get('audio', [])
+        new_audio = new_media_mappings.get('audio', [])
+        
+        if len(old_audio) != len(new_audio):
+            self.logger.info(f"Audio mapping count changed: {len(old_audio)} -> {len(new_audio)}")
+            return True
+            
+        # Create lookup dictionaries by device_id for audio comparison
+        old_audio_by_device = {mapping.get('device_id'): mapping for mapping in old_audio}
+        new_audio_by_device = {mapping.get('device_id'): mapping for mapping in new_audio}
+        
+        # Check if any audio device IDs changed
+        if set(old_audio_by_device.keys()) != set(new_audio_by_device.keys()):
+            self.logger.info("Audio mapping device IDs changed")
+            return True
+            
+        # Check if any audio mapping parameters changed
+        for device_id in old_audio_by_device:
+            old_mapping = old_audio_by_device[device_id]
+            new_mapping = new_audio_by_device[device_id]
+            
+            # Compare relevant fields for audio mappings
+            fields_to_compare = ['ott', 'encoding_format', 'encoder_params', 'priority', 'direction']
+            for field in fields_to_compare:
+                if old_mapping.get(field) != new_mapping.get(field):
+                    self.logger.info(f"Audio mapping {device_id} field '{field}' changed: {old_mapping.get(field)} -> {new_mapping.get(field)}")
+                    return True
+                    
+        self.logger.debug("No media mapping changes detected")
+        return False
+
     def shutdown(self):
         """Shutdown the Media Gateway gracefully. (Same as ros-gateway)"""
         self.logger.info("Shutting down Media Gateway...")
@@ -433,6 +529,9 @@ async def async_main():
     try:
         # Initialize gateway
         gateway = MediaGateway(args.config_path)
+        
+        # Store the current event loop for cross-thread async calls
+        gateway._main_loop = asyncio.get_running_loop()
         
         # Initialize devices
         await gateway.initialize_devices()

@@ -123,6 +123,9 @@ class RosGateway(Node):
         # Request operational configuration from the controller
         self.config = self.request_configuration()
         
+        # Store previous config for change detection
+        self.previous_config = None
+        
         # Check if fallback was used
         if self.config.get("config_id") == "default":
              self.logger.warning("Operational config fetched using fallback mechanism.")
@@ -411,17 +414,84 @@ class RosGateway(Node):
         else:
             self.logger.warning("TopicPublisher not initialized, cannot update publishers.")
             
+        # Check if AV streams configuration changed before reinitializing
+        av_config_changed = self.has_av_config_changed(self.config, new_config)
+        
         # Update the node's stored configuration
+        self.previous_config = self.config.copy() if self.config else None
         self.config = new_config
         self.logger.info("Gateway configuration state updated.")
         
-        # Re-trigger AV initialization if config changes (important!)
-        # Ensure executor exists before trying to create task
-        if self.executor:
-            self.logger.info("Configuration updated, re-scheduling AV initialization task...")
-            self.executor.create_task(self.initialize_av_integration())
+        # Re-trigger AV initialization only if AV config actually changed
+        if av_config_changed:
+            if self.executor:
+                self.logger.info("AV configuration changed, re-scheduling AV initialization task...")
+                self.executor.create_task(self.initialize_av_integration())
+            else:
+                self.logger.error("Node executor not available, cannot re-schedule AV initialization on config update!")
         else:
-            self.logger.error("Node executor not available, cannot re-schedule AV initialization on config update!")
+            self.logger.info("AV configuration unchanged, skipping AV reinitialization")
+
+    def has_av_config_changed(self, old_config, new_config):
+        """Check if AV-related configuration has changed."""
+        if old_config is None:
+            # First time configuration, always initialize
+            return True
+            
+        # Extract AV streams from both configs
+        old_av_streams = self.extract_av_streams(old_config)
+        new_av_streams = self.extract_av_streams(new_config)
+        
+        # Compare the AV stream configurations
+        if len(old_av_streams) != len(new_av_streams):
+            self.logger.info(f"AV stream count changed: {len(old_av_streams)} -> {len(new_av_streams)}")
+            return True
+            
+        # Create lookup dictionaries by topic_id for comparison
+        old_streams_by_id = {stream.get('topic_id'): stream for stream in old_av_streams}
+        new_streams_by_id = {stream.get('topic_id'): stream for stream in new_av_streams}
+        
+        # Check if any stream IDs changed
+        if set(old_streams_by_id.keys()) != set(new_streams_by_id.keys()):
+            self.logger.info("AV stream IDs changed")
+            return True
+            
+        # Check if any stream parameters changed
+        for stream_id in old_streams_by_id:
+            old_stream = old_streams_by_id[stream_id]
+            new_stream = new_streams_by_id[stream_id]
+            
+            # Compare relevant fields for AV streams
+            fields_to_compare = ['ros_topic', 'ott', 'message_type', 'encoder_params', 'priority']
+            for field in fields_to_compare:
+                if old_stream.get(field) != new_stream.get(field):
+                    self.logger.info(f"AV stream {stream_id} field '{field}' changed: {old_stream.get(field)} -> {new_stream.get(field)}")
+                    return True
+                    
+        self.logger.debug("No AV configuration changes detected")
+        return False
+    
+    def extract_av_streams(self, config):
+        """Extract AV streams from configuration."""
+        if not config:
+            return []
+            
+        topic_mappings = config.get('topic_mappings', [])
+        defaults = config.get('defaults', {})
+        av_streams = []
+        
+        for mapping in topic_mappings:
+            # Check if this is an AV stream (has encoder_params or is sensor_msgs/msg/Image)
+            has_encoder_params = 'encoder_params' in mapping
+            is_image_message = mapping.get('message_type', '').endswith('Image')
+            
+            if has_encoder_params or is_image_message:
+                # Apply defaults
+                stream_config = defaults.copy()
+                stream_config.update(mapping)
+                av_streams.append(stream_config)
+                
+        return av_streams
 
     def filter_topic_mappings_by_source_type(self, topic_mappings, defaults, source_type):
         """Filter topic mappings by source type."""

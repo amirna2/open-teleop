@@ -1,5 +1,5 @@
 # Test Open-Teleop Configuration with AV Integration
-version: "1.0"
+version: "2.4"
 config_id: "av-test-config-2025-05-24"
 lastUpdated: "2025-05-04T00:00:00Z"
 robot_id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
