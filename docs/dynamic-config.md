@@ -90,7 +90,3 @@ zeromq:
     *   Unit tests for `ConfigService` methods.
     *   API test for the `PUT` endpoint.
     *   Manual E2E test: Load UI, modify config, save, check if the `teleop_config.yaml` file is updated on the controller container. Restart the gateway container and verify its behavior reflects the change.
-
-**Approval Request:**
-
-Does this plan, focusing on the simple "full config push" via a PUT request and deferring the dynamic gateway notification, seem like a good way forward for implementing UI-driven configuration?
